@@ -1,6 +1,6 @@
 # Cài đặt từ đầu
 
-Cần: tài khoản Cloudflare (gói free đủ), VPS Windows chạy MT5, Node 22.13+ trên máy dev.
+Cần: tài khoản Cloudflare (gói free đủ), VPS Windows chạy MT5 cho mỗi người dùng, Node 22.13+ trên máy của chủ Worker.
 
 ## 1. Worker (một lần, trên máy dev)
 ```bash
@@ -9,26 +9,28 @@ cd worker && npm install
 npx wrangler login
 npm run setup      # tạo D1, nạp schema, sinh WEBHOOK_KEY + SYNC_KEY, đặt secret, deploy
 ```
-Về sau cập nhật Worker bằng commit có `[deploy]` (secret GitHub trong [CICD.md](CICD.md)). Lệnh in ra: **Webhook URL** (dán vào TradingView), **Worker URL** và **SYNC_KEY** (dùng ở bước 2). Lưu lại, không commit.
+Về sau cập nhật Worker bằng commit có `[deploy]` (secret GitHub trong [CICD.md](CICD.md)). Lệnh in **Webhook URL** (dán vào TradingView). Khóa gốc `SYNC_KEY` được ghi vào `worker/.ocean-master.json` (đã `.gitignore`): **không đưa cho người dùng, không commit**. Worker đã chạy bản cũ thì chạy lại `npm run setup` (hoặc commit `[deploy]`) để tạo bảng mới; người dùng cũ cần mã kết nối mới.
 Dùng lại khóa cũ: `node setup.mjs --webhook-key … --sync-key …`.
 
-## 2. Server trên VPS Windows
-**Cách nhanh:** commit có `[release-server]` để GitHub Actions build `OceanRelay-Server-Setup.exe` (xem [CICD.md](CICD.md)), tải ở trang Release, chạy trên VPS và điền Worker URL + SYNC_KEY. Quy trình kiểm thử: [VPS-TEST.md](VPS-TEST.md).
-
-**Cách tay:** trên máy Windows `npm install && npm run pack`, nén `release/ocean-relay`, chép lên VPS. PowerShell **Administrator**:
-```powershell
-.\scripts\install-server.ps1 -WorkerUrl https://ocean-relay.<tên>.workers.dev -SyncKey <SYNC_KEY>
+## 2. Phát mã kết nối cho từng người dùng (trên máy của chủ Worker)
+```bash
+cd worker
+npm run issue -- "Anh Nam"       # in Server ID + mã ocean1.… gửi RIÊNG cho người đó
+npm run issue -- --list          # Server nào đã kết nối, thấy lần cuối khi nào, đang chờ bao nhiêu tín hiệu
 ```
-Script tự sinh `OCEAN_EA_KEY`, bật Quick Tunnel (không cần tên miền), đăng ký tác vụ chạy lúc khởi động và chờ `/api/health`. Xem lại khóa/địa chỉ: `node dist\server.mjs info --show-keys`.
-Có tên miền thì dùng Cloudflare Tunnel có tên và đặt `OCEAN_PUBLIC_URL=https://relay.example.com` thay cho Quick Tunnel.
+Mã chứa địa chỉ Worker, Server ID và **khóa riêng** của Server đó (suy ra từ khóa gốc, Worker không phải lưu danh sách khóa). Muốn thu hồi: đổi khóa gốc (`node setup.mjs --webhook-key … --sync-key …`) rồi cấp lại mã cho những người còn dùng.
 
-## 3. Gateway cùng máy với MT5
+**Định tuyến tín hiệu.** Mặc định alert đi tới mọi Server đã đăng ký; mỗi Server chỉ thấy và chỉ kéo được tín hiệu của chính nó. Chỉ gửi cho một số Server: thêm `&to=<server-id>[,<server-id>]` vào Webhook URL (mỗi nhóm người dùng một alert riêng). Server chỉ đăng ký sau lần liên lạc đầu tiên, nên tín hiệu bắn trước đó không được giao cho nó (dùng `&to=` nếu muốn giữ chỗ trước).
+Trong một Server, chỉ các tài khoản MT5 khai ở `OCEAN_ACCOUNTS` mới nhận tín hiệu; tín hiệu trùng hay nhiều alert về cùng lúc vẫn chỉ vào đúng tài khoản đó, và mỗi tín hiệu chỉ đánh một lần cho mỗi tài khoản.
+
+## 3. Người dùng cuối cài trên VPS
+Gửi cho họ `OceanRelay-Setup.exe` (trang Release) cùng mã kết nối, và [USER-GUIDE.md](USER-GUIDE.md). Bộ cài làm hết: Server, Quick Tunnel, Gateway, chép và biên dịch EA. Cài im lặng:
 ```powershell
-.\scripts\install-gateway.ps1 -ServerUrl http://127.0.0.1:8090 -EaKey <OCEAN_EA_KEY> -SymbolMap XAUUSD=GOLD
+.\OceanRelay-Setup.exe /VERYSILENT /CODE=ocean1.xxxx /ACCOUNTS=900001
 ```
-Gateway ở máy khác: `-ServerUrl` là địa chỉ công khai của Server, `-EaKey` như trên.
+Cài tay (bản portable): `.\scripts\install-server.ps1 -ConnectCode ocean1.xxxx -Accounts 900001` bằng PowerShell Administrator. Kiểm thử: [VPS-TEST.md](VPS-TEST.md).
 
-## 4. MT5
+## 4. MT5 (người dùng làm, chi tiết trong USER-GUIDE)
 1. Tools → Options → Expert Advisors → **Allow WebRequest** → thêm `http://127.0.0.1:47800`.
 2. MetaEditor: biên dịch `OceanRelay.mq5`, gắn lên **một** chart.
 3. Chạy thử trên **DEMO** ở chế độ mặc định (chỉ theo dõi). Thấy tín hiệu và ack `trading_off` trên giao diện là thông.

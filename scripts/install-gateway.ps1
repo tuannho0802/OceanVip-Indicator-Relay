@@ -38,12 +38,32 @@ $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New
 Register-ScheduledTask -TaskName $name -Action $action -Trigger (New-ScheduledTaskTrigger -AtStartup) -Principal $principal -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName $name
 
-# Chép EA vào mọi thư mục MQL5\Experts của các terminal MT5 của người dùng hiện tại (nếu tìm thấy).
+# Chép EA vào mọi terminal MT5 của người dùng hiện tại và biên dịch (best-effort; không được thì làm tay theo hướng dẫn cuối).
 $ea = "$src\ea\OceanRelay.mq5"
-Get-ChildItem "$env:APPDATA\MetaQuotes\Terminal" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-  $dst = "$($_.FullName)\MQL5\Experts"
-  if ((Test-Path $dst) -and (Test-Path $ea)) { Copy-Item $ea $dst -Force; Write-Host "Đã chép EA vào $dst" }
+$compiled = 0; $copied = 0
+$roots = @("$env:APPDATA\MetaQuotes\Terminal")
+# Bộ cài chạy bằng Administrator: thêm hồ sơ của các user khác (VPS thường chỉ có một user).
+Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue | ForEach-Object { $roots += "$($_.FullName)\AppData\Roaming\MetaQuotes\Terminal" }
+foreach ($root in ($roots | Select-Object -Unique)) {
+  Get-ChildItem $root -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+    $dst = "$($_.FullName)\MQL5\Experts"
+    if (-not ((Test-Path $dst) -and (Test-Path $ea))) { return }
+    Copy-Item $ea $dst -Force; $copied++; Write-Host "Đã chép EA vào $dst"
+    # origin.txt trỏ tới thư mục cài MT5 (có metaeditor64.exe).
+    $origin = Join-Path $_.FullName 'origin.txt'
+    if (Test-Path $origin) {
+      $inst = (Get-Content $origin -Raw -Encoding Unicode).Trim()
+      $me = Join-Path $inst 'metaeditor64.exe'
+      if (Test-Path $me) {
+        Start-Process -FilePath $me -ArgumentList "/compile:`"$dst\OceanRelay.mq5`"", '/log' -Wait -WindowStyle Hidden
+        if (Test-Path "$dst\OceanRelay.ex5") { $compiled++; Write-Host 'Đã biên dịch EA (OceanRelay.ex5).' }
+      }
+    }
+  }
 }
+if ($copied -eq 0) { Write-Host "Chưa thấy thư mục MT5. Mở MT5 một lần, hoặc chép tay $ea vào MQL5\Experts." }
 Write-Host "`nGateway đang chạy ở 127.0.0.1:47800 (log: $env:ProgramData\OceanRelayGateway\logs\gateway.log)."
-Write-Host "Trong MT5: Tools > Options > Expert Advisors > Allow WebRequest > thêm  http://127.0.0.1:47800"
-Write-Host "Biên dịch OceanRelay.mq5 trong MetaEditor, gắn lên một chart. Mặc định EA CHỈ THEO DÕI; bật InpAllowTrading để đặt lệnh (thử trên DEMO trước)."
+Write-Host "Việc còn lại trong MT5 (làm một lần):"
+Write-Host "  1) Tools > Options > Expert Advisors > Allow WebRequest > thêm  http://127.0.0.1:47800"
+if ($compiled -eq 0 -and $copied -gt 0) { Write-Host "  2) MetaEditor: mở OceanRelay.mq5 và bấm Compile (F7)" } else { Write-Host "  2) Kéo EA OceanRelay từ Navigator lên MỘT chart (nếu chưa thấy: chuột phải Refresh)" }
+Write-Host "  3) Mặc định EA CHỈ THEO DÕI. Khi sẵn sàng, bật InpAllowTrading=true (thử trên DEMO trước)."

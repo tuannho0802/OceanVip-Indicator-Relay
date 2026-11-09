@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { SERVER_ID_RE, decodeConnectCode } from '../shared/connect'
 import type { LogLevel } from './log'
 
-export const APP_VERSION = process.env.OCEAN_VERSION ?? "0.2.0"
+export const APP_VERSION = process.env.OCEAN_VERSION ?? '0.1.0'
 
 export type ServerConfig = {
   port: number
@@ -18,8 +19,12 @@ export type ServerConfig = {
   eaKey: string
   /** Khóa trong URL webhook gọi thẳng vào Server (không qua Worker). Rỗng = tắt đường webhook trực tiếp. */
   webhookKey: string
-  /** Khóa dùng chung với Worker (chữ ký push, kéo bù, báo địa chỉ tunnel). Rỗng = không dùng Worker. */
+  /** Khóa RIÊNG của Server này với Worker (suy ra từ khóa gốc; nằm trong mã kết nối). Rỗng = không dùng Worker. */
   syncKey: string
+  /** Server ID trong mã kết nối. Bắt buộc khi dùng Worker; Worker dựa vào đây để giao đúng tín hiệu cho Server này. */
+  serverId: string
+  /** Số tài khoản MT5 được phép nhận tín hiệu từ Server này (rỗng = mọi tài khoản dùng đúng OCEAN_EA_KEY). */
+  accounts: string[]
   /** Địa chỉ Worker, ví dụ https://ocean-relay.<tên>.workers.dev. */
   workerUrl: string
   /** Chu kỳ Server kéo bù tín hiệu từ Worker (giây). */
@@ -77,10 +82,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const dataDir = defaultDataDir(env)
   const level = (env.OCEAN_LOG_LEVEL ?? 'info') as LogLevel
   if (!['debug', 'info', 'warn', 'error'].includes(level)) throw new ConfigError('OCEAN_LOG_LEVEL phải là debug|info|warn|error')
-  const syncKey = secret(env, 'OCEAN_SYNC_KEY', 32, false)
-  const workerUrl = url(env, 'OCEAN_WORKER_URL')
-  if (workerUrl && !syncKey) throw new ConfigError('Có OCEAN_WORKER_URL thì phải có OCEAN_SYNC_KEY (trùng SYNC_KEY của Worker)')
+  // Mã kết nối điền sẵn Worker + Server ID + khóa riêng; biến lẻ (nếu đặt) thắng mã.
+  let code: ReturnType<typeof decodeConnectCode> = null
+  if ((env.OCEAN_CONNECT_CODE ?? '').trim()) {
+    code = decodeConnectCode(env.OCEAN_CONNECT_CODE ?? '')
+    if (!code) throw new ConfigError('OCEAN_CONNECT_CODE không hợp lệ (mã phải bắt đầu bằng ocean1. và còn nguyên vẹn; xin chủ Worker cấp lại)')
+  }
+  const syncKey = (env.OCEAN_SYNC_KEY ?? '').trim() ? secret(env, 'OCEAN_SYNC_KEY', 32, false) : (code?.key ?? '')
+  const workerUrl = (env.OCEAN_WORKER_URL ?? '').trim() ? url(env, 'OCEAN_WORKER_URL') : (code?.workerUrl ?? '')
+  const serverId = (env.OCEAN_SERVER_ID ?? '').trim() || (code?.serverId ?? '')
+  if (workerUrl && !syncKey) throw new ConfigError('Có OCEAN_WORKER_URL thì phải có OCEAN_SYNC_KEY (khóa riêng trong mã kết nối)')
   if (syncKey && !workerUrl) throw new ConfigError('Có OCEAN_SYNC_KEY thì phải có OCEAN_WORKER_URL')
+  if (workerUrl && !SERVER_ID_RE.test(serverId)) throw new ConfigError('Dùng Worker thì cần OCEAN_SERVER_ID hợp lệ (chữ thường, số, gạch ngang, 3-40 ký tự) hoặc OCEAN_CONNECT_CODE')
+  const accounts = (env.OCEAN_ACCOUNTS ?? '').split(/[,\s;]+/).filter(Boolean)
+  if (accounts.some((a) => !/^\d{3,12}$/.test(a))) throw new ConfigError('OCEAN_ACCOUNTS chỉ gồm số tài khoản MT5, cách nhau bằng dấu phẩy (ví dụ 900001,900002)')
   const publicUrl = url(env, 'OCEAN_PUBLIC_URL')
   const quickTunnel = env.OCEAN_QUICK_TUNNEL === '1'
   // Worker đẩy được về VPS khi có địa chỉ công khai; không có thì chỉ còn cách Server tự kéo nên kéo dày hơn.
@@ -96,6 +111,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     eaKey: secret(env, 'OCEAN_EA_KEY', 24, true),
     webhookKey: secret(env, 'OCEAN_WEBHOOK_KEY', 16, false),
     syncKey,
+    serverId,
+    accounts: [...new Set(accounts)],
     workerUrl,
     pollSec: int(env, 'OCEAN_POLL_SEC', pushable ? 30 : 5, 2, 600),
     publicUrl,

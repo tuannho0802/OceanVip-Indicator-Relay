@@ -1,6 +1,7 @@
 // Cài Worker MỘT LẦN (chạy trên máy dev đã `wrangler login`):  cd worker && npm install && npm run setup
 // Làm: tạo D1 `ocean-relay`, ghi database_id vào wrangler.jsonc, nạp schema, sinh WEBHOOK_KEY + SYNC_KEY ngẫu nhiên,
-// đặt cả hai làm secret, deploy, rồi IN RA giá trị cần dán vào TradingView và bộ cài Server. Dùng lại khóa cũ:
+// đặt cả hai làm secret, deploy, rồi IN RA Webhook URL cho TradingView. SYNC_KEY là khóa GỐC: chỉ lưu ở máy chủ Worker
+// (worker/.ocean-master.json, đã .gitignore) và dùng cho `npm run issue` để phát mã kết nối cho từng người dùng. Dùng lại khóa cũ:
 //   node setup.mjs --webhook-key <chuỗi> --sync-key <chuỗi>
 import { spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
@@ -37,8 +38,9 @@ run(['secret', 'put', 'SYNC_KEY'], syncKey)
 const dep = run(['deploy'])
 const url = /https:\/\/[A-Za-z0-9.-]+\.workers\.dev/.exec(dep)?.[0] ?? 'https://ocean-relay.<tài-khoản>.workers.dev'
 
+writeFileSync(new URL('./.ocean-master.json', import.meta.url), JSON.stringify({ url, syncKey }, null, 2))
 console.log('\nXong. Lưu các giá trị sau (KHÔNG commit):')
 console.log(`  Webhook URL (dán vào TradingView): ${url}/webhook?key=${webhookKey}`)
 console.log('  Alert TradingView: chọn "Any alert() function call"')
-console.log(`  Bộ cài Server: Worker URL = ${url}`)
-console.log(`                 SYNC_KEY   = ${syncKey}`)
+console.log('  Khóa gốc SYNC_KEY đã ghi vào worker/.ocean-master.json (không đưa cho người dùng).')
+console.log('  Phát mã kết nối cho từng người dùng:  npm run issue -- "Tên người dùng"')

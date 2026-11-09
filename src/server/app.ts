@@ -184,6 +184,11 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
       }
       const tid = String(b.tid ?? '')
       if (!/^[A-Za-z0-9._:@-]{1,64}$/.test(tid)) return json(res, 400, { error: 'bad_tid' })
+      // Mỗi Server chỉ phục vụ các tài khoản MT5 đã khai (OCEAN_ACCOUNTS): tài khoản lạ không nhận tín hiệu dù trùng khóa EA.
+      if (cfg.accounts.length > 0 && !cfg.accounts.includes(String(b.login ?? '').trim())) {
+        log.warn(`gateway: tài khoản ${String(b.login ?? '?').slice(0, 12)} không nằm trong OCEAN_ACCOUNTS`)
+        return json(res, 403, { error: 'account_not_allowed' })
+      }
       const num = (v: unknown) => numOrNull(v) ?? undefined
       const str = (v: unknown, n: number) => (v === undefined ? undefined : String(v).slice(0, n))
       const positions: PingPosition[] = Array.isArray(b.positions)
@@ -264,6 +269,8 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
       return json(res, 200, {
         name: cfg.name, version: APP_VERSION, now, uptimeSec: now - startedAt,
         baseUrl: cfg.publicUrl || deps.tunnelUrl?.() || null,
+        serverId: cfg.serverId || null,
+        accounts: cfg.accounts.map(maskLogin),
         worker: cfg.workerUrl
           ? { url: cfg.workerUrl, lastPollAgoSec: w && w.lastPollOk > 0 ? now - w.lastPollOk : null, error: w?.lastError ?? '', pulled: w?.pulled ?? 0 }
           : null,

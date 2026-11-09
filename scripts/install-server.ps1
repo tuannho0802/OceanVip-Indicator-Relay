@@ -1,6 +1,11 @@
 ﻿# Cài OCEAN Relay Server thành tác vụ chạy lúc khởi động máy (Windows, PowerShell Administrator).
-# Dùng: .\install-server.ps1 [-InstallDir "C:\Program Files\OceanRelay"] [-Port 8090] [-WorkerUrl https://...workers.dev -SyncKey <>=32 ký tự>]
-param([string]$InstallDir = "$env:ProgramFiles\OceanRelay", [int]$Port = 8090, [string]$WorkerUrl = '', [string]$SyncKey = '', [string]$WebhookKey = '')
+# Cài MỘT LẦN cho người dùng cuối: Server + Gateway + EA. Chỉ cần mã kết nối do chủ Worker gửi.
+# Dùng: .\install-server.ps1 -ConnectCode ocean1.xxxx [-Accounts 900001,900002] [-Port 8090] [-InstallDir ...] [-NoGateway] [-SymbolMap XAUUSD=XAUUSDm] [-Tfs M3,M5,M15,H1]
+param(
+  [string]$InstallDir = "$env:ProgramFiles\OceanRelay", [int]$Port = 8090,
+  [string]$ConnectCode = '', [string]$Accounts = '', [string]$WebhookKey = '',
+  [switch]$NoGateway, [string]$SymbolMap = '', [string]$Tfs = 'M3,M5,M15,H1'
+)
 $ErrorActionPreference = 'Stop'
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole('Administrator')) { throw 'Hãy chạy PowerShell bằng quyền Administrator.' }
 $src = Split-Path -Parent $PSScriptRoot
@@ -22,7 +27,7 @@ foreach ($d in 'scripts', 'ea', 'docs') { if (Test-Path "$src\$d") { Copy-Item "
 Copy-Item $node "$InstallDir\node.exe" -Force
 # Dữ liệu và log: chỉ SYSTEM + Administrators.
 icacls "$env:ProgramData\OceanRelay" /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
-& "$InstallDir\init-env.ps1" -Dir $InstallDir -Port $Port -WorkerUrl $WorkerUrl -SyncKey $SyncKey -WebhookKey $WebhookKey
+& "$InstallDir\init-env.ps1" -Dir $InstallDir -Port $Port -ConnectCode $ConnectCode -Accounts $Accounts -WebhookKey $WebhookKey
 
 @'
 @echo off
@@ -53,3 +58,9 @@ for ($i = 0; $i -lt 40 -and -not $up; $i++) {
 if ($up) { Write-Host "OK: http://127.0.0.1:$Port  (giao diện công khai, không đăng nhập)" }
 else { Write-Host "CHƯA LÊN sau 40 giây. Xem log: $env:ProgramData\OceanRelay\logs\server.log" }
 Write-Host "Cấu hình + khóa: $InstallDir\server.env  |  Lệnh xem địa chỉ: `"$InstallDir\node.exe`" `"$InstallDir\dist\server.mjs`" info"
+
+# Gateway cùng máy MT5: dùng đúng khóa EA vừa sinh, người dùng không phải nhập gì thêm.
+if (-not $NoGateway) {
+  $eaKey = ((Get-Content "$InstallDir\server.env" | Where-Object { $_ -match '^OCEAN_EA_KEY=' }) -replace '^OCEAN_EA_KEY=', '').Trim()
+  & "$src\scripts\install-gateway.ps1" -ServerUrl "http://127.0.0.1:$Port" -EaKey $eaKey -Tfs $Tfs -SymbolMap $SymbolMap
+}

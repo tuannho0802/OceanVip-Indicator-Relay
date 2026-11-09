@@ -9,6 +9,7 @@ Không có đăng nhập; giao diện công khai, chỉ đọc. Bảo mật nằ
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Kiến trúc, luồng dữ liệu, vì sao Worker không bị đầy hạn mức |
 | [SECURITY.md](SECURITY.md) | Mô hình đe dọa, các khóa, chữ ký, giới hạn đã biết |
 | [DEPLOY.md](DEPLOY.md) | Cài từ đầu: Worker, VPS, Gateway, MT5, TradingView |
+| [USER-GUIDE.md](USER-GUIDE.md) | Hướng dẫn cho người dùng cuối: cài, MT5, sự cố |
 | [CONFIG.md](CONFIG.md) | Bảng biến môi trường đầy đủ (Server, Gateway, Worker) |
 | [PROTOCOL.md](PROTOCOL.md) | Giao thức từng chặng và định dạng dòng S/U cho EA |
 | [OPERATIONS.md](OPERATIONS.md) | Vận hành, log, sự cố thường gặp |

@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//| OceanRelay.mq5  v0.2.0  (GIAI DOAN 2: DANH LENH THEO TIN HIEU)   |
+//| OceanRelay.mq5  v0.1.0  (DANH LENH THEO TIN HIEU)                |
 //| Ping Gateway cuc bo moi InpPingSec giay: gui tai khoan + lenh    |
 //| dang mo, nhan tin hieu OCEAN (da duoc Gateway kiem chu ky HMAC), |
 //| mo 3 lenh cung Entry/SL voi TP1/TP2/TP3, ack ket qua.            |
@@ -10,17 +10,18 @@
 //| > Allow WebRequest for listed URL.                               |
 //+------------------------------------------------------------------+
 #property copyright "Ocean Relay"
-#property version "2.0"
+#property version "0.10"
 #property strict
 
 #include <Trade\Trade.mqh>
 
-#define EA_VER "0.2.0"
+#define EA_VER "0.1.0"
 
 input string InpGateway = "http://127.0.0.1:47800"; // Gateway cuc bo (phai nam trong Allow WebRequest)
 input int    InpPingSec = 2;                         // Nhip ping (giay, toi thieu 1)
 input int    InpTimeoutMs = 1500;                    // Timeout WebRequest (ms)
 input string InpTerminalId = "";                     // De trong = login@server
+input bool   InpAutoSymbol = true;                   // Ten symbol khong khop thi tim ten gan nhat o san (XAUUSD -> XAUUSDm, XAUUSD.a ...)
 
 input group "=== DANH LENH (mac dinh TAT) ==="
 input bool   InpAllowTrading = false;                // CONG TAC TONG: false = chi theo doi, khong dat lenh
@@ -208,6 +209,43 @@ double NormVol(string sym, double v)
   }
 
 //+------------------------------------------------------------------+
+//| Tim ten symbol dung o san cho ten tu tin hieu.                   |
+//| 1) Ten khop CHINH XAC thi dung luon (Gateway da map neu co).     |
+//| 2) Khong co: tim symbol bat dau bang ten do va chi them toi da 4 |
+//|    ky tu (hau to cua san: m, .a, _i, pro...). Chon ten NGAN NHAT;|
+//|    neu co hai ten cung do dai thi coi la mo ho va KHONG danh.    |
+//| Tra ve "" neu khong co hoac mo ho. Ket qua duoc nho lai.         |
+//+------------------------------------------------------------------+
+string g_symKey[16];
+string g_symVal[16];
+int    g_symN = 0;
+
+string ResolveSymbol(string want)
+  {
+   for(int i = 0; i < g_symN; i++) if(g_symKey[i] == want) return g_symVal[i];
+   string found = "";
+   if(SymbolSelect(want, true)) found = want;
+   else if(InpAutoSymbol)
+     {
+      string up = want; StringToUpper(up);
+      int wl = StringLen(up), total = SymbolsTotal(false), bestLen = 1000, ties = 0;
+      for(int i = 0; i < total; i++)
+        {
+         string nm = SymbolName(i, false), u = nm; StringToUpper(u);
+         int l = StringLen(u);
+         if(l <= wl || l > wl + 4 || StringFind(u, up) != 0) continue;
+         if(l < bestLen) { bestLen = l; found = nm; ties = 1; }
+         else if(l == bestLen) ties++;
+        }
+      if(ties > 1) { Print("OceanRelay: ten symbol ", want, " mo ho o san nay (nhieu ten gan giong) -> khong danh, dat OCEAN_SYMBOL_MAP o Gateway"); found = ""; }
+      else if(found != "" && !SymbolSelect(found, true)) found = "";
+      if(found != "") Print("OceanRelay: tu dong ghep ", want, " -> ", found);
+     }
+   if(g_symN < 16) { g_symKey[g_symN] = want; g_symVal[g_symN] = found; g_symN++; }
+   return found;
+  }
+
+//+------------------------------------------------------------------+
 //| Mo 3 lenh (hoac 1 lenh neu InpTP3Only) cung SL, TP1/TP2/TP3.     |
 //| Tra ve chuoi ket qua de ack. Moi buoc chan deu tra ve ma ro rang.|
 //+------------------------------------------------------------------+
@@ -219,7 +257,9 @@ string OnEntrySignal(ulong id, string side, string symbol, string tf, double ent
    if(!InpAllowTrading) return "trading_off";
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED)) { Print("OceanRelay: Algo Trading tat"); return "trading_off"; }
    if(ageSec > InpMaxAgeSec) { Print("OceanRelay: bo #", id, " qua cu (", ageSec, "s)"); return "too_old"; }
-   if(!SymbolSelect(symbol, true)) { Print("OceanRelay: khong co symbol ", symbol, " (kiem OCEAN_SYMBOL_MAP o Gateway)"); return "no_symbol"; }
+   string sigSymbol = symbol;
+   symbol = ResolveSymbol(sigSymbol);
+   if(symbol == "") { Print("OceanRelay: khong co symbol ", sigSymbol, " o san nay (kiem OCEAN_SYMBOL_MAP o Gateway)"); return "no_symbol"; }
 
    bool buy = (side == "buy");
    double ask = SymbolInfoDouble(symbol, SYMBOL_ASK), bid = SymbolInfoDouble(symbol, SYMBOL_BID);

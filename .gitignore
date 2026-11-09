@@ -13,3 +13,6 @@ pnpm-workspace.yaml
 pnpm-lock.yaml
 *.patch
 *.diff
+worker/.ocean-master.json
+.pnpm-store
+**/node_modules

@@ -130,7 +130,10 @@ export class Gateway {
     }
     if (!res.ok) {
       this.lastError = `server HTTP ${res.status}`
-      this.log.warn(`ping bị Server từ chối: HTTP ${res.status}${res.status === 401 ? ' (OCEAN_EA_KEY không khớp Server?)' : ''}`)
+      this.log.warn(
+        `ping bị Server từ chối: HTTP ${res.status}` +
+          (res.status === 401 ? ' (OCEAN_EA_KEY không khớp Server?)' : res.status === 403 ? ` (tài khoản MT5 ${login} không nằm trong OCEAN_ACCOUNTS của Server)` : ''),
+      )
       this.pendingAcks.set(tid, acks.slice(-200))
       return { status: 502, text: `ERR server_${res.status}` }
     }

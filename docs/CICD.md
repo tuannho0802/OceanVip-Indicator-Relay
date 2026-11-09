@@ -32,15 +32,15 @@ Secret cần đặt trong **Settings → Secrets and variables → Actions**:
 Chạy trên `windows-latest`: `typecheck` + test → đọc `version` từ `package.json` → dừng nếu release `server-v<version>` đã có → `npm run pack` (esbuild + gói `release/ocean-relay` kèm `node.exe`) → **smoke test** (chạy gói thật, gửi đúng alert mẫu một dòng text qua webhook, yêu cầu Server đọc ra `kind=entry`) → Inno Setup (`Installer/ocean-relay.iss`) → SHA256 → Artifacts + GitHub Release `server-v<version>`.
 
 Đầu ra:
-- `OceanRelay-Server-Setup.exe`: bộ cài (hỏi Worker URL + SYNC_KEY, hoặc cài im lặng).
-- `OceanRelay-Server-<version>.zip`: bản portable (chạy `scripts\install-server.ps1` thủ công).
+- `OceanRelay-Setup.exe`: bộ cài (hỏi mã kết nối + số tài khoản MT5, hoặc cài im lặng).
+- `OceanRelay-<version>.zip`: bản portable (chạy `scripts\install-server.ps1` thủ công).
 - `SHA256SUMS.txt`.
 
 **Trước khi release phải tăng `"version"` trong `package.json`** (và `worker/package.json` cho khớp nếu muốn), nếu không workflow dừng vì release đã tồn tại. Không cần secret nào ngoài `GITHUB_TOKEN` mặc định.
 
 Cài im lặng:
 ```powershell
-.\OceanRelay-Server-Setup.exe /VERYSILENT /WORKERURL=https://ocean-relay.<tên>.workers.dev /SYNCKEY=<SYNC_KEY> [/PORT=8090] [/WEBHOOKKEY=<>=16 ký tự>]
+.\OceanRelay-Setup.exe /VERYSILENT /CODE=ocean1.xxxx /ACCOUNTS=<số tài khoản MT5> [/PORT=8090] [/WEBHOOKKEY=<>=16 ký tự>]
 ```
 Không có `/WORKERURL` + `/SYNCKEY` thì Server chạy không có Worker (chỉ nhận webhook trực tiếp nếu có `/WEBHOOKKEY`).
 

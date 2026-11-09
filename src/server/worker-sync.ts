@@ -5,7 +5,10 @@ export type IngestResult = 'new' | 'dup' | 'bad'
 
 export type WorkerSyncOptions = {
     workerUrl: string
+    /** Khóa riêng của Server này (không phải khóa gốc của Worker). */
     syncKey: string
+    /** Server ID: Worker chỉ giao và cho kéo đúng tín hiệu của ID này. */
+    serverId?: string
     pollSec: number
     log: Logger
     /** Đưa một tín hiệu vào Server (đồng bộ). 'dup' = đã có (push đã tới trước), 'bad' = hỏng nhưng đã xử lý xong. */
@@ -46,7 +49,7 @@ export class WorkerSync {
     }
 
     private headers(): Record<string, string> {
-        return { authorization: `Bearer ${this.o.syncKey}`, 'content-type': 'application/json' }
+        return { authorization: `Bearer ${this.o.syncKey}`, 'content-type': 'application/json', ...(this.o.serverId ? { 'x-ocean-server': this.o.serverId } : {}) }
     }
 
     start(): void {
@@ -123,7 +126,7 @@ export class WorkerSync {
         }
         if (!res.ok) {
             await res.body?.cancel()
-            this.lastError = `Worker trả HTTP ${res.status}${res.status === 401 ? ' (SYNC_KEY sai?)' : ''}`
+            this.lastError = `Worker trả HTTP ${res.status}${res.status === 401 ? ' (mã kết nối sai hoặc đã bị thu hồi?)' : ''}`
             this.o.log.warn(`worker: ${this.lastError}`)
             return false
         }

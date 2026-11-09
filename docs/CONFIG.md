@@ -35,3 +35,14 @@ Secret: `WEBHOOK_KEY`, `SYNC_KEY`. Biến: `VPS_ORIGIN` (chỉ khi tunnel có t�
 
 ## Input của EA
 `InpGateway`, `InpPingSec`, `InpTimeoutMs`, `InpTerminalId`; đặt lệnh: `InpAllowTrading` (false), `InpLotPerOrder` (0.01), `InpMaxTotalLots` (0.30), `InpMaxAgeSec` (60), `InpMaxDevPoints` (500), `InpSlippagePts` (30), `InpTP3Only`, `InpMagic`, `InpComment`.
+
+
+## Nhiều Server (v0.1.0)
+| Biến | Nơi | Ý nghĩa |
+|---|---|---|
+| `OCEAN_CONNECT_CODE` | Server | Mã `ocean1.…` do `npm run issue` cấp: điền sẵn Worker URL, Server ID, khóa riêng. Biến lẻ bên dưới (nếu đặt) thắng mã. |
+| `OCEAN_SERVER_ID` | Server | Server ID (chữ thường, số, `-`, 3-40 ký tự). Bắt buộc khi dùng Worker nếu không dùng mã. |
+| `OCEAN_SYNC_KEY` | Server | Khóa **riêng** của Server (không phải khóa gốc của Worker). |
+| `OCEAN_ACCOUNTS` | Server | Số tài khoản MT5 được nhận tín hiệu, cách nhau bằng dấu phẩy. Trống = mọi tài khoản đúng `OCEAN_EA_KEY`. Tài khoản lạ bị 403. |
+| `SYNC_KEY` | Worker | Khóa **gốc**; khóa riêng từng Server = HMAC(SYNC_KEY, `server:<id>`). |
+| `&to=id1,id2` | Webhook URL | Chỉ giao alert cho các Server nêu tên (mặc định: mọi Server đã đăng ký). |

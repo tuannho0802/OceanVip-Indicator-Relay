@@ -8,7 +8,7 @@ export const SYNC_KEY = 'sync-key-0123456789abcdef0123456789'
 
 export const baseCfg = (over: Partial<ServerConfig> = {}): ServerConfig => ({
     port: 0, host: '127.0.0.1', name: 'test', dataDir: '.', dbFile: ':memory:', logDir: null, logLevel: 'error',
-    eaKey: EA_KEY, webhookKey: WEBHOOK_KEY, syncKey: '', workerUrl: '', pollSec: 30,
+    eaKey: EA_KEY, webhookKey: WEBHOOK_KEY, syncKey: '', serverId: '', accounts: [], workerUrl: '', pollSec: 30,
     publicUrl: '', quickTunnel: false, cloudflared: '', maxAgeSec: 120, dedupeSec: 300, uiDir: 'ui',
     ...over,
 })

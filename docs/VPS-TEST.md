@@ -1,11 +1,11 @@
 # Kiểm thử thủ công trên VPS (bộ cài + giao diện + Cloudflare Tunnel)
 
-Chuẩn bị: Worker đã deploy (`npm run setup` hoặc workflow `[deploy]`), có **Worker URL**, **WEBHOOK_KEY**, **SYNC_KEY**. Tải `OceanRelay-Server-Setup.exe` từ GitHub Release `server-v<version>` (đối chiếu `SHA256SUMS.txt`: `Get-FileHash .\OceanRelay-Server-Setup.exe`).
+Chuẩn bị: Worker đã deploy (`npm run setup` hoặc workflow `[deploy]`), có **Worker URL**, **WEBHOOK_KEY**, **SYNC_KEY**. Tải `OceanRelay-Setup.exe` từ GitHub Release `server-v<version>` (đối chiếu `SHA256SUMS.txt`: `Get-FileHash .\OceanRelay-Setup.exe`).
 
 ## 1. Cài
-Chạy bộ cài bằng quyền Administrator, điền Worker URL + SYNC_KEY. Hoặc im lặng:
+Chạy bộ cài bằng quyền Administrator, dán mã kết nối (`npm run issue` trong `worker/`). Hoặc im lặng:
 ```powershell
-.\OceanRelay-Server-Setup.exe /VERYSILENT /WORKERURL=https://ocean-relay.<tên>.workers.dev /SYNCKEY=<SYNC_KEY>
+.\OceanRelay-Setup.exe /VERYSILENT /CODE=ocean1.xxxx /ACCOUNTS=<số tài khoản MT5>
 ```
 Bộ cài chép file vào `C:\Program Files\OceanRelay`, sinh `server.env` (khóa ngẫu nhiên, chỉ SYSTEM/Administrators đọc), đăng ký tác vụ **Ocean Relay Server** (SYSTEM, tự chạy lúc khởi động, tự bật lại sau 5 giây nếu thoát), rồi chờ `/api/health`. Lỗi cài: `C:\ProgramData\OceanRelay\logs\install.log`.
 

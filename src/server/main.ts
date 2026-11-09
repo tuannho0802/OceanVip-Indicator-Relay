@@ -36,7 +36,8 @@ if (process.argv[2] === 'info') {
   console.log(`  Giao diện         : http://127.0.0.1:${cfg.port}/${cfg.publicUrl ? `   |   ${cfg.publicUrl}/` : ''}`)
   console.log(`  EA key            : ${k(cfg.eaKey)}   (dán vào Gateway ở máy khác)`)
   console.log(`  Webhook trực tiếp : ${cfg.webhookKey ? `${cfg.publicUrl || '<địa chỉ công khai>'}/webhook?key=${show ? cfg.webhookKey : mask(cfg.webhookKey)}` : 'tắt (không có OCEAN_WEBHOOK_KEY)'}`)
-  console.log(`  Worker            : ${cfg.workerUrl || '(không dùng)'}   SYNC_KEY ${k(cfg.syncKey)}   kéo bù mỗi ${cfg.pollSec}s`)
+  console.log(`  Worker            : ${cfg.workerUrl || '(không dùng)'}   Server ID ${cfg.serverId || '-'}   khóa ${k(cfg.syncKey)}   kéo bù mỗi ${cfg.pollSec}s`)
+  console.log(`  Tài khoản MT5     : ${cfg.accounts.length ? cfg.accounts.join(', ') : '(mọi tài khoản dùng đúng EA key)'}`)
   console.log(`  Quick Tunnel      : ${cfg.quickTunnel ? 'bật' : 'tắt'}   Dữ liệu: ${cfg.dataDir}`)
   if (!show) console.log('  (thêm --show-keys để hiện đủ khóa)')
   process.exit(0)
@@ -67,7 +68,7 @@ app.server.listen(cfg.port, cfg.host, () => {
   log.info(`OCEAN Relay Server ${APP_VERSION} http://${cfg.host}:${cfg.port} db=${cfg.dbFile} maxAge=${cfg.maxAgeSec}s worker=${cfg.workerUrl || 'không'} webhookTrựcTiếp=${cfg.webhookKey ? 'bật' : 'tắt'}`)
 
   if (cfg.workerUrl) {
-    sync = new WorkerSync({ workerUrl: cfg.workerUrl, syncKey: cfg.syncKey, pollSec: cfg.pollSec, log, ingest: app.ingestFromWorker })
+    sync = new WorkerSync({ workerUrl: cfg.workerUrl, syncKey: cfg.syncKey, serverId: cfg.serverId, pollSec: cfg.pollSec, log, ingest: app.ingestFromWorker })
     if (cfg.publicUrl) sync.setPublicUrl(cfg.publicUrl)
     sync.start()
   }

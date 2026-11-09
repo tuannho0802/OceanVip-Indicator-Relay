@@ -13,6 +13,6 @@
 | `*.env.example` | Mẫu cấu hình |
 | `fake-ea.ts` | Giả lập EA khi chưa có MT5 (`npm run fake-ea`) |
 
-`../Installer/ocean-relay.iss` (Inno Setup) bọc `install-server.ps1` thành `OceanRelay-Server-Setup.exe`, do `.github/workflows/release-server.yml` build. `install-server.ps1` giờ chép cả `scripts/`, `ea/`, `docs/` vào thư mục cài.
+`../Installer/ocean-relay.iss` (Inno Setup) bọc `install-server.ps1` thành `OceanRelay-Setup.exe`, do `.github/workflows/release-server.yml` build. `install-server.ps1` giờ chép cả `scripts/`, `ea/`, `docs/` vào thư mục cài.
 
 Script PowerShell và bộ cài **chưa chạy thử trên Windows thật**; kiểm thử thủ công theo [VPS-TEST.md](../VPS-TEST.md).

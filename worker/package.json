@@ -1,12 +1,13 @@
 {
   "name": "ocean-relay-worker",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --local --persist-to .wrangler/state",
     "deploy": "wrangler deploy",
-    "setup": "node setup.mjs"
+    "setup": "node setup.mjs",
+    "issue": "node issue-code.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

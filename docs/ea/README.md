@@ -1,6 +1,6 @@
 # `ea/` — Expert Advisor MT5
 
-`OceanRelay.mq5` v0.2.0 (MQL5). **Chưa được biên dịch hay chạy trên MT5 thật** — thử trên DEMO.
+`OceanRelay.mq5` v0.1.0 (MQL5). **Chưa được biên dịch hay chạy trên MT5 thật** — thử trên DEMO.
 
 ## Chế độ
 - Mặc định `InpAllowTrading=false`: chỉ ping, hiển thị tín hiệu, ack `trading_off`.
