@@ -1,0 +1,7 @@
+node_modules
+dist
+release
+*.db
+*.db-*
+server.env
+gateway.env

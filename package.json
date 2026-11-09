@@ -1,0 +1,25 @@
+{
+  "name": "ocean-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "server": "tsx src/server/main.ts",
+    "gateway": "tsx src/gateway/main.ts",
+    "fake-ea": "tsx scripts/fake-ea.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.mjs",
+    "pack": "node scripts/build.mjs && node scripts/pack.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
