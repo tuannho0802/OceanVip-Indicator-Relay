@@ -103,6 +103,8 @@ describe('Worker: webhook', () => {
   })
 
   it('tín hiệu kéo bù đã quá hạn thì lưu để xem nhưng không giao cho EA', async () => {
+    // Worker chỉ giao cho Server đã liên lạc ít nhất một lần: đăng ký trước, rồi mới "sập" VPS và bắn alert.
+    await mkSync().pullOnce()
     vpsUp = false
     await hook(BUY)
     await settle()
@@ -196,9 +198,10 @@ describe('WorkerSync', () => {
     const s = new WorkerSync({ workerUrl: WORKER, syncKey: SYNC_KEY, pollSec: 30, log: quiet, ingest: app.ingestFromWorker, fetchFn: flaky })
     s.setPublicUrl('https://abc.trycloudflare.com')
     await s.tick()
-    expect(await env.DB.prepare("SELECT v FROM kv WHERE k = 'vps_url'").first()).toBeNull()
+    // Địa chỉ VPS nằm ở bảng servers (Server đời cũ không có ID dùng id rỗng).
+    expect(await env.DB.prepare("SELECT url FROM servers WHERE id = ''").first()).toBeNull()
     down = false
     await s.tick()
-    expect(await env.DB.prepare("SELECT v FROM kv WHERE k = 'vps_url'").first()).toEqual({ v: 'https://abc.trycloudflare.com' })
+    expect(await env.DB.prepare("SELECT url FROM servers WHERE id = ''").first()).toEqual({ url: 'https://abc.trycloudflare.com' })
   })
 })

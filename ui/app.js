@@ -37,5 +37,6 @@ async function poll(){
     else W.hidden=true;
     const S=$('signals');S.replaceChildren(...(d.signals.length?d.signals.map(s=>signalCard(s,d.now)):[el('div','empty','Chưa có tín hiệu nào. Hãy gắn webhook vào alert TradingView.')]));
     const T=$('terms');T.replaceChildren(...(d.terminals.length?d.terminals.map(t=>termCard(t,d.now)):[el('div','empty','Chưa có EA nào kết nối Gateway.')]));
+    if(window.onData)window.onData(info,d);
   }catch{$('conn').textContent='mất kết nối';$('conn').className='pill bad'}}
 setInterval(poll,2000);poll();

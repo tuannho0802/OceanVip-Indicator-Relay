@@ -2,6 +2,18 @@
 
 Tệp env: `server.env` / `gateway.env` cạnh chương trình, hoặc `OCEAN_ENV_FILE`. Biến đã có trong môi trường được ưu tiên.
 
+## Cài đặt trên giao diện (`settings.json`)
+Người dùng cuối không phải sửa tệp env: trang **Cài đặt** (http://127.0.0.1:8090/#setup) lưu vào `<OCEAN_DATA>\settings.json` (mặc định `C:\ProgramData\OceanRelay`). Trường nào có trong `settings.json` thì **thắng** `server.env`; không có thì dùng `server.env`. Có hiệu lực ngay, không phải khởi động lại; nâng cấp bộ cài không đụng tới tệp này.
+
+| Trường | Tương ứng | Ghi chú |
+|---|---|---|
+| `connectCode` | `OCEAN_CONNECT_CODE` (thắng cả `OCEAN_WORKER_URL`/`OCEAN_SYNC_KEY`/`OCEAN_SERVER_ID`) | `""` = chủ động ngắt Worker |
+| `accounts` | `OCEAN_ACCOUNTS` | `[]` = mọi tài khoản |
+| `symbolMap` | `OCEAN_SYMBOL_MAP` của Gateway | Server gửi xuống Gateway qua mỗi ping nên Gateway áp dụng ngay; thiếu = dùng `gateway.env` |
+| `tfs` | `OCEAN_TFS` của Gateway | `[]` = mọi khung giờ; thiếu = dùng `gateway.env` |
+
+API (`GET/POST /api/setup`) **chỉ nhận yêu cầu từ chính VPS**: kết nối loopback, không qua Cloudflare Tunnel (`cf-connecting-ip`/`x-forwarded-for`), `Host` là `127.0.0.1`/`localhost`, `Origin` (nếu có) là chính trang đó, và POST phải kèm header `x-ocean-setup: 1` + JSON. Dữ liệu sai bị từ chối trước khi ghi tệp, nên cài đặt hỏng không làm Server hỏng; `settings.json` không áp dụng được lúc khởi động thì bị bỏ qua (Server chạy theo `server.env`).
+
 ## Server
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
@@ -9,7 +21,7 @@ Tệp env: `server.env` / `gateway.env` cạnh chương trình, hoặc `OCEAN_EN
 | `OCEAN_PORT` / `OCEAN_HOST` | 8090 / 127.0.0.1 | Địa chỉ nghe |
 | `OCEAN_SRV_NAME` | OCEAN Relay | Tên hiển thị |
 | `OCEAN_WORKER_URL` + `OCEAN_SYNC_KEY` | trống | Dùng Worker; **phải đi cùng nhau**; SYNC_KEY ≥ 32 |
-| `OCEAN_QUICK_TUNNEL` | 0 | `1` = tự chạy cloudflared Quick Tunnel và báo địa chỉ lên Worker |
+| `OCEAN_QUICK_TUNNEL` | 0 (bộ cài ghi `1`) | `1` = tự chạy cloudflared Quick Tunnel và báo địa chỉ lên Worker |
 | `OCEAN_PUBLIC_URL` | trống | Địa chỉ HTTPS công khai (tunnel có tên); tắt Quick Tunnel |
 | `OCEAN_CLOUDFLARED` | tự tải | Đường dẫn cloudflared tự chỉ định |
 | `OCEAN_POLL_SEC` | 30 nếu Worker đẩy được, 5 nếu chỉ kéo | Chu kỳ kéo bù (2–600) |
@@ -41,7 +53,7 @@ Secret: `WEBHOOK_KEY`, `SYNC_KEY`. Biến: `VPS_ORIGIN` (chỉ khi tunnel có t�
 | Biến | Nơi | Ý nghĩa |
 |---|---|---|
 | `OCEAN_CONNECT_CODE` | Server | Mã `ocean1.…` do `npm run issue` cấp: điền sẵn Worker URL, Server ID, khóa riêng. Biến lẻ bên dưới (nếu đặt) thắng mã. |
-| `OCEAN_SERVER_ID` | Server | Server ID (chữ thường, số, `-`, 3-40 ký tự). Bắt buộc khi dùng Worker nếu không dùng mã. |
+| `OCEAN_SERVER_ID` | Server | Server ID (chữ thường, số, `-`, 3-40 ký tự). Để trống = Server đời cũ dùng thẳng khóa gốc (Worker vẫn nhận, chỉ là chế độ tương thích). |
 | `OCEAN_SYNC_KEY` | Server | Khóa **riêng** của Server (không phải khóa gốc của Worker). |
 | `OCEAN_ACCOUNTS` | Server | Số tài khoản MT5 được nhận tín hiệu, cách nhau bằng dấu phẩy. Trống = mọi tài khoản đúng `OCEAN_EA_KEY`. Tài khoản lạ bị 403. |
 | `SYNC_KEY` | Worker | Khóa **gốc**; khóa riêng từng Server = HMAC(SYNC_KEY, `server:<id>`). |

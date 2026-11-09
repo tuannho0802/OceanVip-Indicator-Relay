@@ -2,10 +2,11 @@ import path from 'node:path'
 import { loadEnvIfPresent } from '../shared/env'
 loadEnvIfPresent('server.env')
 import { createApp } from './app'
-import { APP_VERSION, ConfigError, ensureDataDir, loadConfig, type ServerConfig } from './config'
+import { APP_VERSION, ConfigError, defaultDataDir, ensureDataDir, loadConfig, type ServerConfig } from './config'
 import { createLogger } from './log'
-import { QuickTunnel } from './tunnel'
-import { WorkerSync } from './worker-sync'
+import { Runtime } from './runtime'
+import { SetupController } from './setup'
+import { readSettings, settingsPath } from './settings'
 
 const fatal = (msg: string): never => {
   // Chạy nền không có cửa sổ: ghi cả vào tệp log để check-server.ps1 và người vận hành thấy lý do.
@@ -20,7 +21,16 @@ const fatal = (msg: string): never => {
 
 let cfg: ServerConfig
 try {
-  cfg = loadConfig()
+  // Cài đặt do người dùng đặt trên trang Cài đặt (settings.json) thắng server.env.
+  const settings = readSettings(settingsPath(defaultDataDir(process.env)))
+  try {
+    cfg = loadConfig(process.env, settings)
+  } catch (e) {
+    // Cài đặt từ giao diện không làm Server hỏng hẳn: bỏ qua chúng, chạy theo server.env để người dùng còn mở được trang Cài đặt sửa lại.
+    if (Object.keys(settings).length === 0) throw e
+    console.error(`Bỏ qua settings.json vì không áp dụng được: ${String((e as Error).message ?? e)}`)
+    cfg = loadConfig(process.env)
+  }
 } catch (e) {
   fatal(e instanceof ConfigError ? `Cấu hình không hợp lệ: ${e.message}` : `Không đọc được cấu hình: ${String(e)}`)
   throw e
@@ -39,6 +49,7 @@ if (process.argv[2] === 'info') {
   console.log(`  Worker            : ${cfg.workerUrl || '(không dùng)'}   Server ID ${cfg.serverId || '-'}   khóa ${k(cfg.syncKey)}   kéo bù mỗi ${cfg.pollSec}s`)
   console.log(`  Tài khoản MT5     : ${cfg.accounts.length ? cfg.accounts.join(', ') : '(mọi tài khoản dùng đúng EA key)'}`)
   console.log(`  Quick Tunnel      : ${cfg.quickTunnel ? 'bật' : 'tắt'}   Dữ liệu: ${cfg.dataDir}`)
+  console.log(`  Cài đặt giao diện : ${cfg.settingsFile}   (đổi trên trang Cài đặt: http://127.0.0.1:${cfg.port}/#setup)`)
   if (!show) console.log('  (thêm --show-keys để hiện đủ khóa)')
   process.exit(0)
 }
@@ -51,49 +62,30 @@ process.on('uncaughtException', (e) => {
 })
 process.on('unhandledRejection', (e) => log.error(`unhandledRejection: ${String(e).slice(0, 300)}`))
 
-let tunnel: QuickTunnel | null = null
-let sync: WorkerSync | null = null
+let runtime: Runtime | null = null
 
 const app = createApp(cfg, {
   log,
-  tunnelUrl: () => tunnel?.url() ?? null,
-  workerStatus: () => ({ lastPollOk: sync?.lastPollOk ?? 0, lastError: sync?.lastError ?? '', pulled: sync?.pulled ?? 0 }),
+  tunnelUrl: () => runtime?.tunnel?.url() ?? null,
+  workerStatus: () => ({ lastPollOk: runtime?.sync?.lastPollOk ?? 0, lastError: runtime?.sync?.lastError ?? '', pulled: runtime?.sync?.pulled ?? 0 }),
+  setup: new SetupController({ cfg, env: process.env, log, apply: () => (runtime ? runtime.apply() : Promise.resolve(null)) }),
 })
+runtime = new Runtime(cfg, { log, ingest: app.ingestFromWorker })
 
 app.server.on('error', (e: NodeJS.ErrnoException) => {
   fatal(e.code === 'EADDRINUSE' ? `Cổng ${cfg.port} đang bị chương trình khác chiếm (đổi OCEAN_PORT hoặc tắt chương trình đó)` : `Server lỗi: ${e.message}`)
 })
 
 app.server.listen(cfg.port, cfg.host, () => {
-  log.info(`OCEAN Relay Server ${APP_VERSION} http://${cfg.host}:${cfg.port} db=${cfg.dbFile} maxAge=${cfg.maxAgeSec}s worker=${cfg.workerUrl || 'không'} webhookTrựcTiếp=${cfg.webhookKey ? 'bật' : 'tắt'}`)
-
-  if (cfg.workerUrl) {
-    sync = new WorkerSync({ workerUrl: cfg.workerUrl, syncKey: cfg.syncKey, serverId: cfg.serverId, pollSec: cfg.pollSec, log, ingest: app.ingestFromWorker })
-    if (cfg.publicUrl) sync.setPublicUrl(cfg.publicUrl)
-    sync.start()
-  }
-  if (cfg.quickTunnel && !cfg.publicUrl) {
-    const bin = cfg.cloudflared || path.join(cfg.dataDir, process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared')
-    // Địa chỉ Quick Tunnel của lần chạy trước đã chết: báo "chưa có" tới khi tunnel mới lên.
-    sync?.setPublicUrl(null)
-    tunnel = new QuickTunnel({
-      port: cfg.port,
-      binPath: bin,
-      urlFile: path.join(cfg.dataDir, 'tunnel-url.txt'),
-      log,
-      managedBin: cfg.cloudflared === '',
-      // Địa chỉ Quick Tunnel đổi mỗi lần cloudflared chạy lại: báo Worker để nó đẩy tín hiệu đúng chỗ.
-      onChange: (url) => sync?.setPublicUrl(url),
-    })
-    tunnel.start()
-  }
+  log.info(`OCEAN Relay Server ${APP_VERSION} http://${cfg.host}:${cfg.port} db=${cfg.dbFile} maxAge=${cfg.maxAgeSec}s worker=${cfg.workerUrl || 'chưa kết nối (mở trang Cài đặt)'} webhookTrựcTiếp=${cfg.webhookKey ? 'bật' : 'tắt'}`)
+  // Dựng đồng bộ Worker + Quick Tunnel theo cấu hình hiện hành (đổi cài đặt trên giao diện sẽ gọi lại đúng hàm này).
+  void runtime?.apply().catch((e) => log.error(`khởi động Worker/tunnel lỗi: ${String(e).slice(0, 200)}`))
 })
 
 setInterval(() => app.store.prune(Math.floor(Date.now() / 1000) - 30 * 86400), 6 * 3600 * 1000).unref()
 
 const shutdown = () => {
-  tunnel?.stop()
-  sync?.stop()
+  runtime?.stop()
   app.close()
   process.exit(0)
 }

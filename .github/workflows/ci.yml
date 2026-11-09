@@ -1,0 +1,33 @@
+name: CI
+
+# Chạy typecheck + test trên MỌI lần push và pull request, để lỗi lộ ra ngay khi commit chứ không phải đến lúc phát hành
+# (deploy.yml và release-server.yml chỉ chạy khi commit có [deploy] / [release-server] và đều chạy lại đúng các bước kiểm tra này).
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+      # Bản dựng gói chạy được trên Linux (không có node.exe) để bắt lỗi gom mã sớm; bản Windows đầy đủ do release-server.yml dựng.
+      - name: Build thử
+        run: npm run build

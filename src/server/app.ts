@@ -7,6 +7,7 @@ import { APP_VERSION, type ServerConfig } from './config'
 import { type SignalRow, Store } from './db'
 import { type Logger, nullLogger } from './log'
 import { FailLimiter } from './ratelimit'
+import type { SetupController } from './setup'
 import type { IngestResult, WorkerItem } from './worker-sync'
 
 const MAX_BODY = 16 * 1024
@@ -47,6 +48,21 @@ const bearer = (req: IncomingMessage): string => {
 const isLoopback = (a: string | undefined): boolean => a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1'
 
 /**
+ * Yêu cầu có đến từ chính người đang ngồi trên VPS không (điều kiện để được dùng trang Cài đặt)?
+ * Giao diện còn được lộ ra Internet qua Cloudflare Tunnel (chỉ xem), nên phải loại các yêu cầu đi qua tunnel:
+ * tunnel nối vào từ loopback nhưng luôn gắn cf-connecting-ip / x-forwarded-for. Host phải là 127.0.0.1/localhost
+ * (chống DNS rebinding) và Origin (nếu có) phải là chính trang này (chống trang web lạ trong trình duyệt gọi lén).
+ */
+export function isLocalAdmin(req: IncomingMessage): boolean {
+  if (!isLoopback(req.socket.remoteAddress)) return false
+  if (req.headers['cf-connecting-ip'] !== undefined || req.headers['x-forwarded-for'] !== undefined || req.headers['cf-ray'] !== undefined) return false
+  const host = String(req.headers.host ?? '')
+  if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(host)) return false
+  const origin = req.headers.origin
+  return origin === undefined || origin === `http://${host}`
+}
+
+/**
  * IP thật của bên gọi. Cloudflare Tunnel nối vào từ loopback và gắn cf-connecting-ip; chỉ tin header đó khi kết nối
  * đến từ loopback (kẻ ngoài không tự đặt được vì Cloudflare ghi đè, còn máy khác không vào được cổng loopback).
  */
@@ -76,6 +92,8 @@ export type AppDeps = {
   tunnelUrl?: () => string | null
   /** Tình trạng đồng bộ với Worker, để hiện trên giao diện. */
   workerStatus?: () => { lastPollOk: number; lastError: string; pulled: number }
+  /** Trang Cài đặt (đổi mã kết nối, tài khoản... ngay trên giao diện). Không có thì các đường /api/setup trả 404. */
+  setup?: SetupController
 }
 
 export type App = {
@@ -186,7 +204,7 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
       if (!/^[A-Za-z0-9._:@-]{1,64}$/.test(tid)) return json(res, 400, { error: 'bad_tid' })
       // Mỗi Server chỉ phục vụ các tài khoản MT5 đã khai (OCEAN_ACCOUNTS): tài khoản lạ không nhận tín hiệu dù trùng khóa EA.
       if (cfg.accounts.length > 0 && !cfg.accounts.includes(String(b.login ?? '').trim())) {
-        log.warn(`gateway: tài khoản ${String(b.login ?? '?').slice(0, 12)} không nằm trong OCEAN_ACCOUNTS`)
+        log.warn(`gateway: tài khoản ${String(b.login ?? '?').slice(0, 12)} không nằm trong danh sách tài khoản của Server (thêm ở trang Cài đặt)`)
         return json(res, 403, { error: 'account_not_allowed' })
       }
       const num = (v: unknown) => numOrNull(v) ?? undefined
@@ -232,7 +250,8 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
           return { ...wire, received_at: s.received_at, sig: await signSignal(cfg.eaKey, tid, wire) }
         }),
       )
-      return json(res, 200, { now, signals })
+      // Kèm cấu hình người dùng đặt trên trang Cài đặt: Gateway áp dụng ngay, không phải sửa gateway.env hay chạy lại.
+      return json(res, 200, { now, signals, config: { tfs: cfg.tfs, symbolMap: cfg.symbolMap } })
     }
 
     // 4) Công khai, chỉ đọc: giao diện xem tín hiệu và terminal (không đăng nhập).
@@ -264,10 +283,32 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
       return json(res, 200, { now, maxAgeSec: cfg.maxAgeSec, signals: signals.map(view), terminals })
     }
 
+    // Trang Cài đặt: chỉ từ chính VPS (xem isLocalAdmin). POST còn phải kèm header x-ocean-setup (trình duyệt buộc preflight
+    // với header lạ nên trang web khác không gọi lén được) và là JSON.
+    if (p === '/api/setup' && deps.setup) {
+      if (!isLocalAdmin(req)) return json(res, 403, { error: 'local_only' })
+      if (req.method === 'GET') return json(res, 200, deps.setup.view())
+      if (req.method === 'POST') {
+        if (req.headers['x-ocean-setup'] !== '1' || !String(req.headers['content-type'] ?? '').startsWith('application/json')) return json(res, 400, { error: 'bad_request' })
+        let body: unknown
+        try {
+          body = JSON.parse(await readBody(req, 8 * 1024))
+        } catch {
+          return json(res, 400, { ok: false, error: 'Dữ liệu gửi lên không đọc được.' })
+        }
+        const r = await deps.setup.save(body)
+        return json(res, r.ok ? 200 : 400, r)
+      }
+      return json(res, 405, { error: 'method_not_allowed' })
+    }
+
     if (p === '/api/info' && req.method === 'GET') {
       const w = deps.workerStatus?.()
       return json(res, 200, {
         name: cfg.name, version: APP_VERSION, now, uptimeSec: now - startedAt,
+        // local = người xem đang ngồi trên VPS (được mở trang Cài đặt); needsSetup = chưa có đường nhận tín hiệu nào.
+        local: deps.setup !== undefined && isLocalAdmin(req),
+        needsSetup: cfg.workerUrl === '' && cfg.webhookKey === '',
         baseUrl: cfg.publicUrl || deps.tunnelUrl?.() || null,
         serverId: cfg.serverId || null,
         accounts: cfg.accounts.map(maskLogin),

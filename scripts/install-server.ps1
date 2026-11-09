@@ -1,6 +1,8 @@
 ﻿# Cài OCEAN Relay Server thành tác vụ chạy lúc khởi động máy (Windows, PowerShell Administrator).
-# Cài MỘT LẦN cho người dùng cuối: Server + Gateway + EA. Chỉ cần mã kết nối do chủ Worker gửi.
-# Dùng: .\install-server.ps1 -ConnectCode ocean1.xxxx [-Accounts 900001,900002] [-Port 8090] [-InstallDir ...] [-NoGateway] [-SymbolMap XAUUSD=XAUUSDm] [-Tfs M3,M5,M15,H1]
+# Cài MỘT LẦN cho người dùng cuối: Server + Gateway + EA. Không cần nhập gì lúc cài: xong mở trang Cài đặt trong trình duyệt
+# (http://127.0.0.1:<cổng>/#setup) dán mã kết nối do chủ Worker gửi; sau này vào lại đó để đổi, không cần cài lại.
+# -ConnectCode / -Accounts chỉ để cài tự động (không bắt buộc).
+# Dùng: .\install-server.ps1 [-ConnectCode ocean1.xxxx] [-Accounts 900001,900002] [-Port 8090] [-InstallDir ...] [-NoGateway] [-SymbolMap XAUUSD=XAUUSDm] [-Tfs M3,M5,M15,H1]
 param(
   [string]$InstallDir = "$env:ProgramFiles\OceanRelay", [int]$Port = 8090,
   [string]$ConnectCode = '', [string]$Accounts = '', [string]$WebhookKey = '',
@@ -57,6 +59,10 @@ for ($i = 0; $i -lt 40 -and -not $up; $i++) {
 }
 if ($up) { Write-Host "OK: http://127.0.0.1:$Port  (giao diện công khai, không đăng nhập)" }
 else { Write-Host "CHƯA LÊN sau 40 giây. Xem log: $env:ProgramData\OceanRelay\logs\server.log" }
+if ($up) {
+  if ($ConnectCode -eq '') { Write-Host "`n>>> VIỆC TIẾP THEO: mở http://127.0.0.1:$Port/#setup trong trình duyệt và dán mã kết nối (có thể đổi lại bất cứ lúc nào)." }
+  else { Write-Host "Đã kết nối bằng mã kết nối. Cần đổi tài khoản/mã sau này: http://127.0.0.1:$Port/#setup" }
+}
 Write-Host "Cấu hình + khóa: $InstallDir\server.env  |  Lệnh xem địa chỉ: `"$InstallDir\node.exe`" `"$InstallDir\dist\server.mjs`" info"
 
 # Gateway cùng máy MT5: dùng đúng khóa EA vừa sinh, người dùng không phải nhập gì thêm.

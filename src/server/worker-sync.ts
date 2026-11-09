@@ -52,7 +52,8 @@ export class WorkerSync {
         return { authorization: `Bearer ${this.o.syncKey}`, 'content-type': 'application/json', ...(this.o.serverId ? { 'x-ocean-server': this.o.serverId } : {}) }
     }
 
-    start(): void {
+    /** `immediate = false`: nhịp đầu tiên chờ đủ một chu kỳ (khi người gọi vừa tự gọi tick() xong). */
+    start(immediate = true): void {
         if (!this.stopped) return
         this.stopped = false
         const tick = async () => {
@@ -69,7 +70,11 @@ export class WorkerSync {
             this.timer = setTimeout(() => void tick(), wait * 1000)
             this.timer.unref()
         }
-        void tick()
+        if (immediate) void tick()
+        else {
+            this.timer = setTimeout(() => void tick(), this.o.pollSec * 1000)
+            this.timer.unref()
+        }
     }
 
     stop(): void {

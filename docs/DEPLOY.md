@@ -24,11 +24,11 @@ Mã chứa địa chỉ Worker, Server ID và **khóa riêng** của Server đó
 Trong một Server, chỉ các tài khoản MT5 khai ở `OCEAN_ACCOUNTS` mới nhận tín hiệu; tín hiệu trùng hay nhiều alert về cùng lúc vẫn chỉ vào đúng tài khoản đó, và mỗi tín hiệu chỉ đánh một lần cho mỗi tài khoản.
 
 ## 3. Người dùng cuối cài trên VPS
-Gửi cho họ `OceanRelay-Setup.exe` (trang Release) cùng mã kết nối, và [USER-GUIDE.md](USER-GUIDE.md). Bộ cài làm hết: Server, Quick Tunnel, Gateway, chép và biên dịch EA. Cài im lặng:
+Gửi cho họ `OceanRelay-Setup.exe` (trang Release) cùng mã kết nối, và [USER-GUIDE.md](USER-GUIDE.md). Bộ cài không hỏi gì và làm hết: Server, Quick Tunnel, Gateway, chép và biên dịch EA; cài xong tự mở trang Cài đặt để người dùng dán mã (đổi lại sau này cũng ở đó, không cần cài lại). Cài im lặng (mọi tham số tùy chọn):
 ```powershell
-.\OceanRelay-Setup.exe /VERYSILENT /CODE=ocean1.xxxx /ACCOUNTS=900001
+.\OceanRelay-Setup.exe /VERYSILENT [/CODE=ocean1.xxxx] [/ACCOUNTS=900001]
 ```
-Cài tay (bản portable): `.\scripts\install-server.ps1 -ConnectCode ocean1.xxxx -Accounts 900001` bằng PowerShell Administrator. Kiểm thử: [VPS-TEST.md](VPS-TEST.md).
+Cài tay (bản portable): `.\scripts\install-server.ps1 [-ConnectCode ocean1.xxxx] [-Accounts 900001]` bằng PowerShell Administrator. Kiểm thử: [VPS-TEST.md](VPS-TEST.md).
 
 ## 4. MT5 (người dùng làm, chi tiết trong USER-GUIDE)
 1. Tools → Options → Expert Advisors → **Allow WebRequest** → thêm `http://127.0.0.1:47800`.

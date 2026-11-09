@@ -14,11 +14,63 @@
   <div class="sp"></div>
   <span class="pill" id="worker" hidden></span>
   <span class="pill" id="age"></span>
+  <a class="btn ghost sm" id="setupBtn" href="#setup" hidden>⚙ Cài đặt</a>
 </header>
+<div class="banner" id="banner" hidden>
+  <span>Chưa kết nối Worker nên chưa nhận được tín hiệu nào. Dán mã kết nối là xong, chỉ mất một phút.</span>
+  <a class="btn primary sm" href="#setup">Cài đặt ngay</a>
+</div>
 <main id="app">
   <section><h2>Tín hiệu</h2><div id="signals"></div></section>
   <aside><h2>Terminal MT5</h2><div id="terms"></div></aside>
 </main>
+<main id="setupView" hidden>
+  <div class="setup">
+    <div class="setup-top"><h1>Cài đặt OCEAN Relay</h1><a class="btn ghost sm" href="#">← Xem tín hiệu</a></div>
+    <p class="lead">Dán mã kết nối là chạy ngay, không phải cài lại hay sửa tệp. Bạn có thể quay lại trang này bất cứ lúc nào để đổi.</p>
+
+    <section class="card"><h2>Trạng thái</h2><ul class="checks" id="checks"></ul></section>
+
+    <section class="card">
+      <h2>1 · Mã kết nối</h2>
+      <p class="hint" id="codeCurrent"></p>
+      <input id="fCode" type="text" autocomplete="off" spellcheck="false" placeholder="Dán mã bắt đầu bằng ocean1. vào đây">
+      <p class="hint">Mã do người quản trị Worker gửi riêng cho bạn. Mã đã chứa địa chỉ Worker và khóa của bạn, không phải nhập gì thêm. Để trống ô này nếu không muốn đổi mã.</p>
+    </section>
+
+    <section class="card">
+      <h2>2 · Tài khoản MT5 được nhận tín hiệu</h2>
+      <input id="fAccounts" type="text" autocomplete="off" spellcheck="false" placeholder="ví dụ: 900001, 900002">
+      <p class="hint">Cách nhau bằng dấu phẩy. Để trống = mọi tài khoản MT5 trên máy này.</p>
+    </section>
+
+    <details class="card" id="adv">
+      <summary>Nâng cao (không bắt buộc)</summary>
+      <label for="fMap">Đổi tên symbol cho khớp sàn của bạn</label>
+      <input id="fMap" type="text" autocomplete="off" spellcheck="false" placeholder="ví dụ: XAUUSD=GOLD, EURUSD=EURUSDm">
+      <p class="hint">Dạng TRADINGVIEW=SÀN, cách nhau bằng dấu phẩy. Để trống = giữ nguyên tên symbol.</p>
+      <label for="fTfs">Chỉ nhận tín hiệu ở các khung giờ</label>
+      <input id="fTfs" type="text" autocomplete="off" spellcheck="false" placeholder="mặc định của bộ cài (M3, M5, M15, H1)">
+      <p class="hint">Ví dụ M5,M15. Ghi ALL để nhận mọi khung giờ. Để trống = mặc định của bộ cài.</p>
+    </details>
+
+    <div class="actions">
+      <button class="btn primary" id="btnSave" type="button">Lưu và kiểm tra kết nối</button>
+      <button class="btn ghost danger" id="btnDisc" type="button" hidden>Ngắt kết nối Worker</button>
+    </div>
+    <div class="msg" id="setupMsg" role="status" aria-live="polite"></div>
+
+    <section class="card">
+      <h2>3 · Việc cần làm trong MT5 (chỉ một lần)</h2>
+      <ol class="steps">
+        <li>Vào <b>Tools › Options › Expert Advisors</b>, bật <b>Allow WebRequest for listed URL</b> và thêm địa chỉ <code id="gwUrl">http://127.0.0.1:47800</code> <button class="btn ghost sm" id="btnCopy" type="button">Chép</button></li>
+        <li>Mở <b>Navigator</b>, kéo EA <b>OceanRelay</b> lên <b>một</b> chart bất kỳ. Nếu chưa thấy EA, bấm chuột phải vào Expert Advisors › Refresh.</li>
+        <li>Mặc định EA <b>chỉ theo dõi</b>, chưa vào lệnh. Thử trên tài khoản DEMO rồi mới bật <b>InpAllowTrading</b>.</li>
+      </ol>
+    </section>
+  </div>
+</main>
 <script src="/app.js"></script>
+<script src="/setup.js"></script>
 </body>
 </html>

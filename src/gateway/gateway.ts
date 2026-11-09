@@ -79,6 +79,17 @@ export class Gateway {
   private pendingAcks = new Map<string, Ack[]>()
   lastServerOk = 0
   lastError = ''
+  /** Cấu hình người dùng đặt trên trang Cài đặt của Server (đến kèm mỗi lần ping); null = dùng cấu hình của Gateway (gateway.env). */
+  private liveTfs: string[] | null = null
+  private liveMap: Record<string, string> | null = null
+
+  /** Khung giờ và ánh xạ symbol đang có hiệu lực. */
+  get tfs(): string[] {
+    return this.liveTfs ?? this.cfg.tfs
+  }
+  get symbolMap(): Record<string, string> {
+    return this.liveMap ?? this.cfg.symbolMap
+  }
 
   constructor(
     readonly cfg: GatewayConfig,
@@ -132,7 +143,7 @@ export class Gateway {
       this.lastError = `server HTTP ${res.status}`
       this.log.warn(
         `ping bị Server từ chối: HTTP ${res.status}` +
-          (res.status === 401 ? ' (OCEAN_EA_KEY không khớp Server?)' : res.status === 403 ? ` (tài khoản MT5 ${login} không nằm trong OCEAN_ACCOUNTS của Server)` : ''),
+          (res.status === 401 ? ' (OCEAN_EA_KEY không khớp Server?)' : res.status === 403 ? ` (tài khoản MT5 ${login} không nằm trong danh sách tài khoản của Server: thêm ở trang Cài đặt http://127.0.0.1:8090/#setup)` : ''),
       )
       this.pendingAcks.set(tid, acks.slice(-200))
       return { status: 502, text: `ERR server_${res.status}` }
@@ -141,7 +152,8 @@ export class Gateway {
     this.lastServerOk = this.clock()
     this.lastError = ''
 
-    const data = (await res.json()) as { now: number; signals: CloudSignal[] }
+    const data = (await res.json()) as { now: number; signals: CloudSignal[]; config?: { tfs?: unknown; symbolMap?: unknown } }
+    this.applyLiveConfig(data.config)
     const lines = ['OK']
     const skipped: Ack[] = []
     for (const s of data.signals) {
@@ -153,11 +165,11 @@ export class Gateway {
         continue
       }
       const tf = (s.tf ?? '').toUpperCase()
-      if (this.cfg.tfs.length > 0 && !this.cfg.tfs.includes(tf)) {
+      if (this.tfs.length > 0 && !this.tfs.includes(tf)) {
         skipped.push({ id: s.id, result: 'skipped_tf' })
         continue
       }
-      const sym = this.cfg.symbolMap[(s.symbol ?? '').toUpperCase()] ?? s.symbol ?? ''
+      const sym = this.symbolMap[(s.symbol ?? '').toUpperCase()] ?? s.symbol ?? ''
       const age = Math.max(0, data.now - s.received_at)
       if (s.kind === 'entry') {
         lines.push(['S', s.id, s.side, clean(sym), tf, fmt(s.entry), fmt(s.sl), fmt(s.tp1), fmt(s.tp2), fmt(s.tp3), age].join('|'))
@@ -168,6 +180,20 @@ export class Gateway {
     // Ack do lọc sẽ lên Server ở ping kế tiếp (nhờ vậy tín hiệu bị bỏ cũng hiện trên giao diện).
     if (skipped.length > 0) this.pendingAcks.set(tid, skipped)
     return { status: 200, text: lines.join('\n') }
+  }
+
+  /** Nhận cấu hình sống từ Server; dữ liệu sai dạng thì bỏ qua (giữ cấu hình cũ), thiếu/null thì quay về gateway.env. */
+  private applyLiveConfig(c: { tfs?: unknown; symbolMap?: unknown } | undefined): void {
+    const tfs = c && Array.isArray(c.tfs) && c.tfs.every((x) => typeof x === 'string') ? (c.tfs as string[]).map((x) => x.toUpperCase()) : null
+    let map: Record<string, string> | null = null
+    if (c && typeof c.symbolMap === 'object' && c.symbolMap !== null && !Array.isArray(c.symbolMap)) {
+      map = {}
+      for (const [k, v] of Object.entries(c.symbolMap)) if (typeof v === 'string') map[k.toUpperCase()] = v
+    }
+    if (c !== undefined) {
+      this.liveTfs = tfs
+      this.liveMap = map
+    }
   }
 
   listen(): Server {

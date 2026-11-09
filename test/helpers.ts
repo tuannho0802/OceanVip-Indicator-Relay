@@ -1,4 +1,6 @@
 import { createRequire } from 'node:module'
+import os from 'node:os'
+import path from 'node:path'
 import type { ServerConfig } from '../src/server/config'
 import type { D1Like, D1Stmt } from '../worker/src/handler'
 
@@ -10,6 +12,7 @@ export const baseCfg = (over: Partial<ServerConfig> = {}): ServerConfig => ({
     port: 0, host: '127.0.0.1', name: 'test', dataDir: '.', dbFile: ':memory:', logDir: null, logLevel: 'error',
     eaKey: EA_KEY, webhookKey: WEBHOOK_KEY, syncKey: '', serverId: '', accounts: [], workerUrl: '', pollSec: 30,
     publicUrl: '', quickTunnel: false, cloudflared: '', maxAgeSec: 120, dedupeSec: 300, uiDir: 'ui',
+    settingsFile: path.join(os.tmpdir(), 'ocean-test-never-written.json'), symbolMap: null, tfs: null,
     ...over,
 })
 

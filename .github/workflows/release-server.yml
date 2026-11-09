@@ -8,6 +8,7 @@ name: Release OCEAN Relay
 # Phiên bản lấy từ package.json ở thư mục gốc, nên PHẢI tăng "version" trước khi release. Tag Git và GitHub Release có tên
 # server-v<version>. Release đó đã tồn tại thì workflow dừng ngay, không ghi đè bộ cài đã phát hành.
 # Chạy tay (workflow_dispatch) chỉ build và đưa file vào Artifacts, không tạo Release.
+# Bộ cài không hỏi gì; người dùng cài xong dán mã kết nối ở trang Cài đặt (http://127.0.0.1:8090/#setup).
 # Đầu ra: OceanRelay-Setup.exe (Inno Setup), OceanRelay-<version>.zip (bản portable), SHA256SUMS.txt.
 on:
   push:
@@ -71,7 +72,7 @@ jobs:
       - name: Kiểm tra gói có node.exe
         shell: pwsh
         run: |
-          foreach ($f in 'node.exe', 'dist\server.mjs', 'dist\gateway.mjs', 'web\index.html', 'scripts\install-server.ps1', 'scripts\install-gateway.ps1', 'ea\OceanRelay.mq5') {
+          foreach ($f in 'node.exe', 'dist\server.mjs', 'dist\gateway.mjs', 'web\index.html', 'web\setup.js', 'scripts\install-server.ps1', 'scripts\install-gateway.ps1', 'ea\OceanRelay.mq5') {
             if (-not (Test-Path "release\ocean-relay\$f")) { throw "Goi thieu $f" }
           }
 
@@ -102,6 +103,17 @@ jobs:
             $r = Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:18090/webhook?key=ci-smoke-webhook-key-0123' -ContentType 'text/plain' -Body $alert
             if ($r.kind -ne 'entry') { throw "Webhook khong doc ra tin hieu vao lenh: $($r | ConvertTo-Json -Compress)" }
             Write-Host 'OK: Server, giao dien va khuon alert text mot dong'
+
+            # Trang Cai dat: chay tren may nay (loopback) doc duoc; ma sai bi tu choi (400) va khong ghi settings.json.
+            $setup = Invoke-RestMethod http://127.0.0.1:18090/api/setup
+            if ($setup.connected -ne $false) { throw "GET /api/setup tra ket qua la: $($setup | ConvertTo-Json -Compress)" }
+            $bad = Invoke-WebRequest -Method Post -Uri http://127.0.0.1:18090/api/setup -Headers @{ 'x-ocean-setup' = '1' } -ContentType 'application/json' -Body '{"connectCode":"ocean1.hong"}' -SkipHttpErrorCheck -UseBasicParsing
+            if ($bad.StatusCode -ne 400) { throw "Ma ket noi sai phai bi tu choi (400), nhung nhan $($bad.StatusCode)" }
+            # Qua tunnel (co cf-connecting-ip) thi khong duoc dung trang Cai dat.
+            $remote = Invoke-WebRequest -Uri http://127.0.0.1:18090/api/setup -Headers @{ 'cf-connecting-ip' = '8.8.8.8' } -SkipHttpErrorCheck -UseBasicParsing
+            if ($remote.StatusCode -ne 403) { throw "Yeu cau qua tunnel phai bi chan (403), nhung nhan $($remote.StatusCode)" }
+            if (Test-Path (Join-Path $dir 'settings.json')) { throw 'Ma sai da lam ghi settings.json' }
+            Write-Host 'OK: trang Cai dat (chi may cuc bo, tu choi ma sai)'
           } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
 
       - name: Build bộ cài (Inno Setup) và bản portable

@@ -29,18 +29,18 @@ Secret cần đặt trong **Settings → Secrets and variables → Actions**:
 `WEBHOOK_KEY` và `SYNC_KEY` là secret của Worker, đặt **một lần** bằng `cd worker && npm run setup`; workflow không đụng tới chúng nên deploy không làm đổi khóa.
 
 ## `release-server.yml` — bộ cài Server
-Chạy trên `windows-latest`: `typecheck` + test → đọc `version` từ `package.json` → dừng nếu release `server-v<version>` đã có → `npm run pack` (esbuild + gói `release/ocean-relay` kèm `node.exe`) → **smoke test** (chạy gói thật, gửi đúng alert mẫu một dòng text qua webhook, yêu cầu Server đọc ra `kind=entry`) → Inno Setup (`Installer/ocean-relay.iss`) → SHA256 → Artifacts + GitHub Release `server-v<version>`.
+Chạy trên `windows-latest`: `typecheck` + test → đọc `version` từ `package.json` → dừng nếu release `server-v<version>` đã có → `npm run pack` (esbuild + gói `release/ocean-relay` kèm `node.exe`) → **smoke test** (chạy gói thật: gửi đúng alert mẫu một dòng text qua webhook, yêu cầu Server đọc ra `kind=entry`; kiểm tra trang Cài đặt mở được trên máy cục bộ, từ chối mã sai và từ chối yêu cầu qua tunnel) → Inno Setup (`Installer/ocean-relay.iss`) → SHA256 → Artifacts + GitHub Release `server-v<version>`.
 
 Đầu ra:
-- `OceanRelay-Setup.exe`: bộ cài (hỏi mã kết nối + số tài khoản MT5, hoặc cài im lặng).
+- `OceanRelay-Setup.exe`: bộ cài **không hỏi gì**; cài xong mở trang Cài đặt trong trình duyệt để người dùng dán mã kết nối + điền tài khoản MT5 (đổi lại bất cứ lúc nào). Vẫn cài im lặng được.
 - `OceanRelay-<version>.zip`: bản portable (chạy `scripts\install-server.ps1` thủ công).
 - `SHA256SUMS.txt`.
 
 **Trước khi release phải tăng `"version"` trong `package.json`** (và `worker/package.json` cho khớp nếu muốn), nếu không workflow dừng vì release đã tồn tại. Không cần secret nào ngoài `GITHUB_TOKEN` mặc định.
 
-Cài im lặng:
+Cài im lặng (mọi tham số đều không bắt buộc; bỏ `/CODE` thì dán mã ở trang Cài đặt sau):
 ```powershell
-.\OceanRelay-Setup.exe /VERYSILENT /CODE=ocean1.xxxx /ACCOUNTS=<số tài khoản MT5> [/PORT=8090] [/WEBHOOKKEY=<>=16 ký tự>]
+.\OceanRelay-Setup.exe /VERYSILENT [/CODE=ocean1.xxxx] [/ACCOUNTS=<số tài khoản MT5>] [/PORT=8090] [/WEBHOOKKEY=<>=16 ký tự>]
 ```
 Không có `/WORKERURL` + `/SYNCKEY` thì Server chạy không có Worker (chỉ nhận webhook trực tiếp nếu có `/WEBHOOKKEY`).
 

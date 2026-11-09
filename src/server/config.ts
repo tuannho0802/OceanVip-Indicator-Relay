@@ -3,6 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SERVER_ID_RE, decodeConnectCode } from '../shared/connect'
 import type { LogLevel } from './log'
+import { type Settings, overlayEnv, settingsPath } from './settings'
 
 export const APP_VERSION = process.env.OCEAN_VERSION ?? '0.1.0'
 
@@ -38,6 +39,12 @@ export type ServerConfig = {
   maxAgeSec: number
   dedupeSec: number
   uiDir: string
+  /** Tệp cài đặt do giao diện web ghi (settings.json). */
+  settingsFile: string
+  /** Ánh xạ symbol đặt trên giao diện; Server gửi xuống Gateway. null = để Gateway dùng cấu hình của nó. */
+  symbolMap: Record<string, string> | null
+  /** Khung giờ đặt trên giao diện ([] = tất cả); null = để Gateway dùng cấu hình của nó. */
+  tfs: string[] | null
 }
 
 export class ConfigError extends Error { }
@@ -68,7 +75,7 @@ const url = (env: NodeJS.ProcessEnv, k: string): string => {
   return v
 }
 
-const defaultDataDir = (env: NodeJS.ProcessEnv): string =>
+export const defaultDataDir = (env: NodeJS.ProcessEnv): string =>
   env.OCEAN_DATA ?? (process.platform === 'win32' ? path.join(env.ProgramData ?? 'C:\\ProgramData', 'OceanRelay') : path.resolve('data'))
 
 /** Thư mục giao diện: cạnh server.mjs (gói phát hành: `web/`), hoặc `ui/` khi chạy từ mã nguồn. */
@@ -78,7 +85,12 @@ function defaultUiDir(): string {
   return path.resolve('ui')
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
+/**
+ * Đọc cấu hình từ biến môi trường (server.env) rồi áp cài đặt từ giao diện web (settings.json) lên trên.
+ * Gọi lại với cài đặt mới để áp dụng ngay không cần chạy lại Server.
+ */
+export function loadConfig(baseEnv: NodeJS.ProcessEnv = process.env, settings: Settings = {}): ServerConfig {
+  const env = overlayEnv(baseEnv, settings)
   const dataDir = defaultDataDir(env)
   const level = (env.OCEAN_LOG_LEVEL ?? 'info') as LogLevel
   if (!['debug', 'info', 'warn', 'error'].includes(level)) throw new ConfigError('OCEAN_LOG_LEVEL phải là debug|info|warn|error')
@@ -93,7 +105,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const serverId = (env.OCEAN_SERVER_ID ?? '').trim() || (code?.serverId ?? '')
   if (workerUrl && !syncKey) throw new ConfigError('Có OCEAN_WORKER_URL thì phải có OCEAN_SYNC_KEY (khóa riêng trong mã kết nối)')
   if (syncKey && !workerUrl) throw new ConfigError('Có OCEAN_SYNC_KEY thì phải có OCEAN_WORKER_URL')
-  if (workerUrl && !SERVER_ID_RE.test(serverId)) throw new ConfigError('Dùng Worker thì cần OCEAN_SERVER_ID hợp lệ (chữ thường, số, gạch ngang, 3-40 ký tự) hoặc OCEAN_CONNECT_CODE')
+  // serverId rỗng = Server đời cũ dùng thẳng khóa gốc (Worker vẫn nhận). Có thì phải đúng dạng.
+  if (workerUrl && serverId !== '' && !SERVER_ID_RE.test(serverId)) throw new ConfigError('OCEAN_SERVER_ID không hợp lệ (chữ thường, số, gạch ngang, 3-40 ký tự); hoặc dùng OCEAN_CONNECT_CODE thay cho nó')
   const accounts = (env.OCEAN_ACCOUNTS ?? '').split(/[,\s;]+/).filter(Boolean)
   if (accounts.some((a) => !/^\d{3,12}$/.test(a))) throw new ConfigError('OCEAN_ACCOUNTS chỉ gồm số tài khoản MT5, cách nhau bằng dấu phẩy (ví dụ 900001,900002)')
   const publicUrl = url(env, 'OCEAN_PUBLIC_URL')
@@ -121,6 +134,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     maxAgeSec: int(env, 'OCEAN_MAX_AGE_SEC', 120, 5, 3600),
     dedupeSec: int(env, 'OCEAN_DEDUPE_SEC', 300, 0, 86400),
     uiDir: env.OCEAN_UI_DIR ?? defaultUiDir(),
+    settingsFile: settingsPath(dataDir),
+    symbolMap: settings.symbolMap ?? null,
+    tfs: settings.tfs ?? null,
   }
 }
 

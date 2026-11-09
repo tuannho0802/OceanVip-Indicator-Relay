@@ -3,6 +3,8 @@
   Dùng: .\init-env.ps1 -Dir "C:\Program Files\OceanRelay" [-ConnectCode ocean1.xxxx] [-Accounts 900001,900002] [-Port 8090] [-WebhookKey <>=16 ký tự>]
   Có -ConnectCode: ghi OCEAN_CONNECT_CODE (Worker + Server ID + khóa riêng nằm trong mã) và bật Quick Tunnel.
   Có -Accounts: ghi OCEAN_ACCOUNTS (Server chỉ giao tín hiệu cho các tài khoản MT5 này).
+  Hai tham số trên KHÔNG bắt buộc: người dùng cuối thường cài xong rồi dán mã trên trang Cài đặt (http://127.0.0.1:<cổng>/#setup);
+  cài đặt đó lưu ở ProgramData\OceanRelay\settings.json và thắng server.env, nên chạy lại bộ cài không làm mất.
 #>
 param(
   [Parameter(Mandatory = $true)][string]$Dir,
@@ -35,6 +37,9 @@ if ($ConnectCode -ne '') {
 }
 if ($Accounts -ne '') { $lines = Set-EnvLine $lines 'OCEAN_ACCOUNTS' $Accounts }
 if ($WebhookKey -ne '') { $lines = Set-EnvLine $lines 'OCEAN_WEBHOOK_KEY' $WebhookKey }
+# Quick Tunnel bật sẵn (không cần tên miền): người dùng dán mã trên trang Cài đặt là Worker đẩy được tín hiệu về ngay.
+# Đã có OCEAN_QUICK_TUNNEL (tự đặt) hoặc OCEAN_PUBLIC_URL (tunnel có tên) thì giữ nguyên.
+if (-not ($lines | Where-Object { $_ -match '^(OCEAN_QUICK_TUNNEL|OCEAN_PUBLIC_URL)=' })) { $lines += 'OCEAN_QUICK_TUNNEL=1' }
 $lines = Set-EnvLine $lines 'OCEAN_PORT' "$Port"
 $lines | Set-Content -Encoding ASCII $f
 icacls $f /inheritance:r /grant:r '*S-1-5-18:(R)' '*S-1-5-32-544:(F)' | Out-Null   # chỉ SYSTEM + Administrators
