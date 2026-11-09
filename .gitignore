@@ -5,3 +5,5 @@ release
 *.db-*
 server.env
 gateway.env
+pnpm-workspace.yaml
+pnpm-lock.yaml

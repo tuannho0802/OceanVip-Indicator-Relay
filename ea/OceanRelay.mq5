@@ -7,7 +7,7 @@
 //| > Allow WebRequest for listed URL.                               |
 //+------------------------------------------------------------------+
 #property copyright "Ocean Relay"
-#property version   "0.1"
+#property version "1.0"
 #property strict
 
 #define EA_VER "0.1.0"
