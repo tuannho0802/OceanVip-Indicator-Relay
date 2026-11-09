@@ -22,7 +22,8 @@ if ($Port -le 0) {
     if ($sj.gatewayPort) { $Port = [int]$sj.gatewayPort }
   } catch { }
 }
-if ($Port -le 0) { $Port = $defaultGwPort }
+$autoPort = ($Port -le 0)
+if ($autoPort) { $Port = $defaultGwPort }
 if ($Port -lt 1024 -or $Port -gt 65535) { throw "Cổng Gateway phải từ 1024 đến 65535 (đang là $Port)." }
 $src = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path "$src\dist\gateway.mjs")) { throw "Không thấy $src\dist\gateway.mjs." }
@@ -31,6 +32,12 @@ $node = if (Test-Path "$src\node.exe") { "$src\node.exe" } else { (Get-Command n
 Stop-ScheduledTask -TaskName 'Ocean Relay Gateway' -ErrorAction SilentlyContinue
 # Chỉ dừng Gateway của OCEAN (nằm trong thư mục cài này), KHÔNG đụng Gateway khác cùng máy (ví dụ AZ Sentinel cũng chạy node.exe).
 Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($InstallDir, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and $_.CommandLine -like '*gateway.mjs*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+. "$PSScriptRoot\port-lib.ps1"
+# Không ai chỉ định cổng: nếu cổng mặc định đang bị chương trình khác giữ thì tự lấy cổng rảnh kế tiếp.
+if ($autoPort) {
+  $free = Get-FreeGatewayPort $defaultGwPort $InstallDir
+  if ($free -ne $Port) { Write-Host "Cổng $Port đang bị chương trình khác dùng: tự chọn cổng Gateway $free." -ForegroundColor Yellow; $Port = $free }
+}
 # Cổng đang bị chương trình khác giữ? Chỉ cảnh báo (Gateway vẫn cài; vào trang Cài đặt > Nâng cao đổi cổng là chạy).
 try {
   $busy = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop | Select-Object -First 1

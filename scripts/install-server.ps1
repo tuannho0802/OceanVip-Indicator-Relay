@@ -31,6 +31,21 @@ foreach ($d in 'scripts', 'ea', 'docs') { if (Test-Path "$src\$d") { Copy-Item "
 Copy-Item $node "$InstallDir\node.exe" -Force
 # Dữ liệu và log: chỉ SYSTEM + Administrators.
 icacls "$env:ProgramData\OceanRelay" /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+# Cổng Gateway: tham số > trang Cài đặt (settings.json) > OCEAN_GW_PORT cũ trong server.env. Chưa ai đặt thì tự dò: 47860 bận (ví dụ AZ Sentinel)
+# thì lấy cổng rảnh kế tiếp và ghi vào server.env để Server + Gateway + EA thống nhất.
+. "$PSScriptRoot\port-lib.ps1"
+if (-not $NoGateway -and $GatewayPort -le 0) {
+  $known = 0
+  try { $sj0 = Get-Content "$env:ProgramData\OceanRelay\settings.json" -Raw -ErrorAction Stop | ConvertFrom-Json; if ($sj0.gatewayPort) { $known = [int]$sj0.gatewayPort } } catch { }
+  if ($known -le 0 -and (Test-Path "$InstallDir\server.env")) {
+    $l0 = Get-Content "$InstallDir\server.env" | Where-Object { $_ -match '^OCEAN_GW_PORT=\d+' } | Select-Object -First 1
+    if ($l0) { $known = [int](($l0 -replace '^OCEAN_GW_PORT=', '').Trim()) }
+  }
+  if ($known -le 0) {
+    $auto = Get-FreeGatewayPort 47860 $InstallDir @($Port)
+    if ($auto -ne 47860) { $GatewayPort = $auto; Write-Host "Cổng 47860 đang bị chương trình khác dùng: tự chọn cổng Gateway $auto (đổi được ở trang Cài đặt)." -ForegroundColor Yellow }
+  }
+}
 & "$InstallDir\init-env.ps1" -Dir $InstallDir -Port $Port -ConnectCode $ConnectCode -Accounts $Accounts -WebhookKey $WebhookKey -GatewayPort $GatewayPort
 
 @'

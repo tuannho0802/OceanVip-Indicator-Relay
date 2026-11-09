@@ -62,7 +62,7 @@
     if(g){
       if(g.lastSeenAgoSec===null||g.lastSeenAgoSec>30)L.push(check('warn','Chưa thấy Gateway báo về: Gateway chưa chạy, hoặc là bản cũ (chạy lại bộ cài mới nhất)'));
       else if(g.error)L.push(check('bad','Gateway chưa mở được cổng '+g.port+': '+g.error+'. Đổi sang cổng khác ở mục Nâng cao'+(g.listening?' (tạm giữ cổng '+g.listening+')':'')));
-      else if(g.listening===g.port)L.push(check('ok','Gateway đang nghe cổng '+g.port+' (địa chỉ cho MT5: http://127.0.0.1:'+g.port+')'));
+      else if(g.listening===g.port){$('gwUrl').textContent='http://127.0.0.1:'+g.port;L.push(check('ok','Gateway đang nghe cổng '+g.port+' (địa chỉ cho MT5: http://127.0.0.1:'+g.port+')'))}
       else L.push(check('warn','Gateway đang chuyển sang cổng '+g.port+'…'));
     }
     const on=live?live.terminals.filter(t=>t.online).length:0;

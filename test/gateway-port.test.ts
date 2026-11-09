@@ -230,6 +230,12 @@ describe('cổng Gateway: đổi trên trang Cài đặt, Gateway tự chuyển'
     expect((await info()).json.gateway).toMatchObject({ listening: 47860 })
   })
 
+  it('Server chưa đặt cổng, Gateway tự chọn cổng khác (do bộ cài dò): trang Cài đặt hiện đúng cổng thật', async () => {
+    expect(await round()).toBe(true)
+    const g = (await info()).json.gateway
+    expect(g).toMatchObject({ port: gwDefault, listening: gwDefault, error: '' })
+  })
+
   it('Gateway cũ chưa báo về: giao diện biết là chưa thấy (listening null)', async () => {
     expect((await info()).json.gateway).toMatchObject({ listening: null, lastSeenAgoSec: null })
   })

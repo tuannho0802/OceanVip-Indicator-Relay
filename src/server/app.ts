@@ -331,7 +331,7 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
         local,
         // Tình trạng cổng Gateway: chỉ cho người ngồi trên VPS (người xem từ xa không cần biết cổng cục bộ).
         gateway: local
-          ? { port: cfg.gatewayPort, listening: gwLink.at > 0 ? gwLink.port : null, error: gwLink.error, lastSeenAgoSec: gwLink.at > 0 ? now - gwLink.at : null }
+          ? { port: cfg.gatewayPortSet || gwLink.at === 0 || gwLink.port === 0 ? cfg.gatewayPort : gwLink.port, listening: gwLink.at > 0 ? gwLink.port : null, error: gwLink.error, lastSeenAgoSec: gwLink.at > 0 ? now - gwLink.at : null }
           : null,
         needsSetup: cfg.workerUrl === '' && cfg.webhookKey === '',
         baseUrl: cfg.publicUrl || deps.tunnelUrl?.() || null,

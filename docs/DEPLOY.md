@@ -31,7 +31,7 @@ Gửi cho họ `OceanRelay-Setup.exe` (trang Release) cùng mã kết nối, và
 Cài tay (bản portable): `.\scripts\install-server.ps1 [-ConnectCode ocean1.xxxx] [-Accounts 900001]` bằng PowerShell Administrator. Kiểm thử: [VPS-TEST.md](VPS-TEST.md).
 
 ## 4. MT5 (người dùng làm, chi tiết trong USER-GUIDE)
-1. Tools → Options → Expert Advisors → **Allow WebRequest** → thêm `http://127.0.0.1:47860` (cổng mặc định; trang Cài đặt luôn ghi đúng địa chỉ đang dùng). Trùng cổng với chương trình khác trên VPS thì đổi ở trang Cài đặt › Nâng cao › **Cổng Gateway**, rồi thêm địa chỉ mới vào Allow WebRequest và sửa `InpGateway` của EA.
+1. Tools → Options → Expert Advisors → **Allow WebRequest** → thêm `http://127.0.0.1:47860` (cổng mặc định; nếu 47860 đang bị chương trình khác dùng, bộ cài tự chọn cổng rảnh kế tiếp, ví dụ 47861; trang Cài đặt luôn ghi đúng địa chỉ đang dùng). Trùng cổng với chương trình khác trên VPS thì đổi ở trang Cài đặt › Nâng cao › **Cổng Gateway**, rồi thêm địa chỉ mới vào Allow WebRequest và sửa `InpGateway` của EA.
 2. MetaEditor: biên dịch `OceanRelay.mq5`, gắn lên **một** chart.
 3. Chạy thử trên **DEMO** ở chế độ mặc định (chỉ theo dõi). Thấy tín hiệu và ack `trading_off` trên giao diện là thông.
 4. Bật `InpAllowTrading=true`, chỉnh `InpLotPerOrder`, `InpMaxTotalLots`, `InpMaxDevPoints` rồi mới dùng thật.
