@@ -14,7 +14,7 @@ TradingView ──/webhook?key=──► Worker (D1) ──push HMAC──► Se
 npm install
 npm test && npm run typecheck
 cp scripts/server.env.example server.env    # điền OCEAN_EA_KEY (>= 24 ký tự)
-cp scripts/gateway.env.example gateway.env  # cùng OCEAN_EA_KEY
+cp scripts/gateway.env.example gateway.env  # cùng OCEAN_EA_KEY (cổng Gateway mặc định 47860)
 npm run server      # http://127.0.0.1:8090
 npm run gateway
 npm run fake-ea     # giả lập EA khi chưa có MT5

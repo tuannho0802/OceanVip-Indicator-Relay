@@ -9,12 +9,18 @@ Bạn có một VPS Windows chạy MT5 và đã nhận từ người quản tr�
 4. Bấm **Lưu và kiểm tra kết nối**. Vài giây sau trang báo "Đã kết nối Worker thành công" (hoặc nói rõ lý do nếu chưa được). Có hiệu lực ngay, không phải khởi động lại gì.
 
 ## Đổi cài đặt sau này (không cần cài lại)
-Mở **Start Menu › OCEAN Relay › Cài đặt OCEAN Relay**, hoặc vào http://127.0.0.1:8090/#setup, hoặc bấm nút **⚙ Cài đặt** trên trang chính. Ở đó bạn có thể đổi mã kết nối, tài khoản MT5, đổi tên symbol cho khớp sàn (ví dụ `XAUUSD=GOLD`) và chọn khung giờ nhận tín hiệu. Cài đặt được giữ nguyên khi bạn nâng cấp bộ cài.
+Mở **Start Menu › OCEAN Relay › Cài đặt OCEAN Relay**, hoặc vào http://127.0.0.1:8090/#setup, hoặc bấm nút **⚙ Cài đặt** trên trang chính. Ở đó bạn có thể đổi mã kết nối, tài khoản MT5, đổi tên symbol cho khớp sàn (ví dụ `XAUUSD=GOLD`) và chọn khung giờ nhận tín hiệu, và đổi **Cổng Gateway** (xem bên dưới). Cài đặt được giữ nguyên khi bạn nâng cấp bộ cài.
 
 Trang Cài đặt **chỉ mở được ngay trên VPS này**. Người xem từ xa (qua địa chỉ công khai) chỉ thấy tín hiệu, không thấy nút Cài đặt.
 
+## Đổi cổng Gateway (khi trùng với chương trình khác trên VPS)
+Gateway của OCEAN Relay nghe ở cổng **47860** (cố ý khác 47800 mà nhiều Gateway khác hay dùng). Mục **Trạng thái** trên trang Cài đặt báo "Gateway đang nghe cổng …", hoặc báo đỏ "Gateway chưa mở được cổng …" nếu cổng đang bị chiếm.
+1. Mở trang Cài đặt › **Nâng cao** › ô **Cổng Gateway** (hoặc bấm nút "Trùng cổng? Đổi cổng" ở bước 3), nhập cổng khác (1024-65535, ví dụ 47901), bấm **Lưu**. Gateway tự chuyển cổng trong vài giây, không phải cài lại. Để trống ô này = quay về 47860.
+2. Trong MT5, làm lại với địa chỉ mới: thêm `http://127.0.0.1:<cổng mới>` vào Allow WebRequest, và ở EA (chuột phải chart › Expert Advisors › Properties › Inputs) sửa **InpGateway** thành đúng địa chỉ đó.
+Khi Gateway chưa mở được cổng mới, nó vẫn giữ cổng cũ để EA không bị đứt; mục Trạng thái hiện rõ lý do.
+
 ## Trong MT5 (một lần)
-1. Tools → Options → Expert Advisors → **Allow WebRequest** → thêm `http://127.0.0.1:47800`.
+1. Tools → Options → Expert Advisors → **Allow WebRequest** → thêm `http://127.0.0.1:47860` (trang Cài đặt, bước 3, luôn ghi đúng địa chỉ đang dùng).
 2. Kéo EA **OceanRelay** (Navigator) lên **một** chart bất kỳ.
 3. EA mặc định **chỉ theo dõi**. Thử trên DEMO, thấy tín hiệu hiện ra rồi mới bật `InpAllowTrading=true` và chỉnh `InpLotPerOrder`.
 
@@ -30,6 +36,7 @@ Mỗi tín hiệu vào lệnh mở **3 lệnh cùng chiều, cùng giá vào, c�
 ## Gặp sự cố
 | Hiện tượng | Cách xử lý |
 |---|---|
+| EA không kết nối được Gateway (`HTTP=-1`/4060), hoặc mục Trạng thái báo "Gateway chưa mở được cổng" | Cổng trùng chương trình khác, hoặc chưa thêm đúng địa chỉ vào Allow WebRequest / `InpGateway`. Xem mục "Đổi cổng Gateway" ở trên. |
 | Log Gateway: HTTP 403 | Số tài khoản MT5 không nằm trong danh sách đã khai. Mở trang Cài đặt, sửa ô tài khoản. |
 | Trang Cài đặt báo lỗi 401 / mã kết nối sai | Nhờ quản trị cấp lại mã rồi dán lại ở trang Cài đặt. |
 | EA báo `no_symbol` | Sàn không có symbol đó hoặc có nhiều tên gần giống: xem Experts log, rồi đặt "Đổi tên symbol" trong mục Nâng cao của trang Cài đặt. |

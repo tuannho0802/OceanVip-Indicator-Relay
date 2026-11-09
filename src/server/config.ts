@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SERVER_ID_RE, decodeConnectCode } from '../shared/connect'
+import { DEFAULT_GW_PORT, MAX_PORT, MIN_GW_PORT } from '../shared/defaults'
 import type { LogLevel } from './log'
 import { type Settings, overlayEnv, settingsPath } from './settings'
 
@@ -45,6 +46,10 @@ export type ServerConfig = {
   symbolMap: Record<string, string> | null
   /** Khung giờ đặt trên giao diện ([] = tất cả); null = để Gateway dùng cấu hình của nó. */
   tfs: string[] | null
+  /** Cổng cục bộ Gateway phải nghe (EA nối tới): trang Cài đặt thắng OCEAN_GW_PORT, mặc định 47860. Gateway hỏi Server và tự đổi theo. */
+  gatewayPort: number
+  /** Cổng Gateway đã được đặt rõ (trang Cài đặt hoặc OCEAN_GW_PORT). Chưa đặt thì Server KHÔNG ép cổng lên Gateway (Gateway ở máy khác giữ cổng riêng). */
+  gatewayPortSet: boolean
 }
 
 export class ConfigError extends Error { }
@@ -111,10 +116,13 @@ export function loadConfig(baseEnv: NodeJS.ProcessEnv = process.env, settings: S
   if (accounts.some((a) => !/^\d{3,12}$/.test(a))) throw new ConfigError('OCEAN_ACCOUNTS chỉ gồm số tài khoản MT5, cách nhau bằng dấu phẩy (ví dụ 900001,900002)')
   const publicUrl = url(env, 'OCEAN_PUBLIC_URL')
   const quickTunnel = env.OCEAN_QUICK_TUNNEL === '1'
+  const port = int(env, 'OCEAN_PORT', 8090, 1, 65535)
+  const gatewayPort = int(env, 'OCEAN_GW_PORT', DEFAULT_GW_PORT, MIN_GW_PORT, MAX_PORT)
+  if (gatewayPort === port) throw new ConfigError(`Cổng Gateway (${gatewayPort}) không được trùng cổng Server (${port}). Chọn một cổng khác.`)
   // Worker đẩy được về VPS khi có địa chỉ công khai; không có thì chỉ còn cách Server tự kéo nên kéo dày hơn.
   const pushable = publicUrl !== '' || quickTunnel
   return {
-    port: int(env, 'OCEAN_PORT', 8090, 1, 65535),
+    port,
     host: env.OCEAN_HOST ?? '127.0.0.1',
     name: (env.OCEAN_SRV_NAME ?? 'OCEAN Relay').slice(0, 60),
     dataDir,
@@ -137,6 +145,8 @@ export function loadConfig(baseEnv: NodeJS.ProcessEnv = process.env, settings: S
     settingsFile: settingsPath(dataDir),
     symbolMap: settings.symbolMap ?? null,
     tfs: settings.tfs ?? null,
+    gatewayPort,
+    gatewayPortSet: (env.OCEAN_GW_PORT ?? '').trim() !== '',
   }
 }
 

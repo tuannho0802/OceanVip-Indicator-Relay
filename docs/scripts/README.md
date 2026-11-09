@@ -5,7 +5,7 @@
 | `build.mjs` | esbuild → `dist/server.mjs`, `dist/gateway.mjs` (Node 22, `node:sqlite` để ngoài) |
 | `pack.mjs` | Tạo `release/ocean-relay` (dist, web, ea, scripts, docs, node.exe nếu chạy trên Windows) |
 | `install-server.ps1` | Cài Server thành tác vụ SYSTEM lúc khởi động, sinh khóa, chờ health |
-| `install-gateway.ps1` | Cài Gateway, chép EA vào các thư mục MT5 |
+| `install-gateway.ps1` | Cài Gateway (cổng `-Port`, mặc định 47860 hoặc cổng đã đặt ở trang Cài đặt), chép EA vào các thư mục MT5 (đặt sẵn `InpGateway` theo cổng). Chỉ dừng tiến trình của chính OCEAN, không đụng Gateway khác |
 | `init-env.ps1` | Sinh `server.env` với khóa ngẫu nhiên, đặt ACL |
 | `uninstall.ps1` | Gỡ tác vụ, giữ dữ liệu |
 | `check-vps.ps1` | Kiểm tra sau cài: Server, Quick Tunnel, Worker kéo bù, số tín hiệu |

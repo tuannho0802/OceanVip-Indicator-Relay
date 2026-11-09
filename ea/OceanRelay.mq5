@@ -6,18 +6,18 @@
 //| EA chi noi chuyen voi Gateway/Server tren VPS (khong goi Worker).|
 //| MAC DINH InpAllowTrading=false: chi theo doi, KHONG dat lenh.    |
 //| Chua duoc bien dich tren MT5 that: thu tren DEMO truoc.          |
-//| Dat http://127.0.0.1:47800 vao Tools > Options > Expert Advisors |
-//| > Allow WebRequest for listed URL.                               |
+//| Dat http://127.0.0.1:47860 vao Tools > Options > Expert Advisors |
+//| > Allow WebRequest for listed URL (doi cong thi sua InpGateway). |
 //+------------------------------------------------------------------+
 #property copyright "Ocean Relay"
-#property version "0.10"
+#property version "1.00"
 #property strict
 
 #include <Trade\Trade.mqh>
 
 #define EA_VER "0.1.0"
 
-input string InpGateway = "http://127.0.0.1:47800"; // Gateway cuc bo (phai nam trong Allow WebRequest)
+input string InpGateway = "http://127.0.0.1:47860";  // Gateway cuc bo (phai nam trong Allow WebRequest)
 input int    InpPingSec = 2;                         // Nhip ping (giay, toi thieu 1)
 input int    InpTimeoutMs = 1500;                    // Timeout WebRequest (ms)
 input string InpTerminalId = "";                     // De trong = login@server

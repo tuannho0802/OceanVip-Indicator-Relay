@@ -24,6 +24,7 @@ OCEAN VIP by Duong | BUY ENTRY | XAUUSD | M3 | Entry: 4094.540 | SL: 4088.700 | 
 | `POST /webhook?key=` | OCEAN_WEBHOOK_KEY | Webhook trực tiếp (tắt nếu không đặt khóa) |
 | `POST /api/ingest` | `x-ocean-ts` + `x-ocean-sig` = HMAC(SYNC_KEY, `ts.body`) | Worker đẩy `{wid,age,raw}` |
 | `POST /api/gw/ping` | Bearer EA_KEY | Gateway ping, nhận `{now, signals:[…+sig]}` |
+| `POST /api/gw/config` | Bearer EA_KEY | Gateway gửi `{port, error}` (cổng đang nghe thật, lý do nếu chưa mở được cổng); nhận `{now, config:{tfs, symbolMap, gatewayPort}}`. `gatewayPort` null = chưa đặt rõ, Gateway dùng cổng trong `gateway.env`. Gateway gọi mỗi 5 giây |
 | `GET /api/state`, `/api/info`, `/api/health`, tệp tĩnh | công khai | Giao diện |
 
 ## EA ⇄ Gateway (`POST /v1/ping`, text `khóa=giá trị`)

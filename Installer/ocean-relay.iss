@@ -8,9 +8,10 @@
 ; Cai im lang (cho script/CI), tat ca tham so deu KHONG bat buoc:
 ;   OceanRelay-Setup.exe /VERYSILENT [/CODE=ocean1.xxxx] [/ACCOUNTS=900001,900002] [/PORT=8090] [/WEBHOOKKEY=<>=16 ky tu>]
 ;       [/GATEWAY=0 (khong cai Gateway)] [/SYMBOLMAP=XAUUSD=XAUUSDm] [/TFS=M3,M5,M15,H1]
+;       [/GWPORT=47860 (cong Gateway cho EA; mac dinh 47860, KHONG phai 47800 de khoi dung Gateway khac cung VPS. Doi sau o trang Cai dat)]
 ; Bo cai chi chay scripts\install-server.ps1 (dung chung voi cai tay): chep file vao thu muc cai, sinh server.env (giu khoa EA
 ; neu da co), dang ky tac vu SYSTEM chay luc khoi dong, bat Quick Tunnel, doi /api/health, roi cai Gateway (tac vu rieng,
-; 127.0.0.1:47800) voi OCEAN_EA_KEY vua sinh, chep + bien dich EA vao MQL5\Experts cua MT5.
+; 127.0.0.1:47860) voi OCEAN_EA_KEY vua sinh, chep + bien dich EA vao MQL5\Experts cua MT5.
 ; Go cai dat: go tac vu, giu du lieu o C:\ProgramData\OceanRelay.
 
 #ifndef MyAppVersion
@@ -160,6 +161,7 @@ procedure RunInstallScript;
 var
   RC: Integer;
   Pkg, Args, LogFile, Code, Acc, Hook, Map, Tfs: String;
+  GwPort: Integer;
 begin
   Pkg := ExpandConstant('{tmp}\ocean-pkg');
   ForceDirectories(ExpandConstant('{commonappdata}\OceanRelay\logs'));
@@ -178,6 +180,9 @@ begin
   if Map <> '' then Args := Args + ' -SymbolMap "' + Map + '"';
   Tfs := ExpandConstant('{param:TFS|}');
   if Tfs <> '' then Args := Args + ' -Tfs "' + Tfs + '"';
+  { Cong Gateway: chi nhan so hop le (1024-65535); khong co thi script tu giu cong da dat o trang Cai dat, hoac mac dinh 47860. }
+  GwPort := StrToIntDef(Trim(ExpandConstant('{param:GWPORT|}')), 0);
+  if (GwPort >= 1024) and (GwPort <= 65535) then Args := Args + ' -GatewayPort ' + IntToStr(GwPort);
   WizardForm.StatusLabel.Caption := 'Dang cai Server, Gateway va EA (co the mat 1-2 phut)...';
   RC := 1;
   Exec(ExpandConstant('{cmd}'), '/S /C ""powershell.exe" ' + Args + ' > "' + LogFile + '" 2>&1"', Pkg, SW_HIDE, ewWaitUntilTerminated, RC);
@@ -202,8 +207,9 @@ begin
       'OCEAN Relay da chay va tu khoi dong cung may.' + #13#10#13#10 +
       'BUOC TIEP THEO: de nguyen o "Mo trang cai dat" ben duoi roi bam Finish, dan Ma ket noi vao trang vua mo.' + #13#10#13#10 +
       'Sau do lam 2 viec trong MT5 (mot lan, trang Cai dat cung co huong dan):' + #13#10 +
-      '1) Tools > Options > Expert Advisors > Allow WebRequest > them  http://127.0.0.1:47800' + #13#10 +
+      '1) Tools > Options > Expert Advisors > Allow WebRequest > them  http://127.0.0.1:47860  (mac dinh; trang Cai dat ghi dung dia chi dang dung)' + #13#10 +
       '2) Keo EA OceanRelay (Navigator) len MOT chart. Mac dinh EA chi theo doi; bat InpAllowTrading khi san sang (thu tren DEMO truoc).' + #13#10#13#10 +
+      'Bi trung cong voi chuong trinh khac tren VPS? Mo trang Cai dat > Nang cao > Cong Gateway, doi la chay, khong can cai lai.' + #13#10#13#10 +
       'Mo lai trang cai dat bat cu luc nao: Start Menu > OCEAN Relay > Cai dat, hoac http://127.0.0.1:' + IntToStr(PortValue) + '/#setup' + #13#10 +
       'Log cai dat: C:\ProgramData\OceanRelay\logs\install.log';
 end;

@@ -52,6 +52,9 @@
       <label for="fTfs">Chỉ nhận tín hiệu ở các khung giờ</label>
       <input id="fTfs" type="text" autocomplete="off" spellcheck="false" placeholder="mặc định của bộ cài (M3, M5, M15, H1)">
       <p class="hint">Ví dụ M5,M15. Ghi ALL để nhận mọi khung giờ. Để trống = mặc định của bộ cài.</p>
+      <label for="fPort">Cổng Gateway (cổng EA trong MT5 kết nối tới)</label>
+      <input id="fPort" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="mặc định 47860">
+      <p class="hint">Chỉ đổi khi cổng bị trùng với chương trình khác trên VPS (ví dụ Gateway khác đang dùng 47800). Từ 1024 đến 65535, không trùng cổng của Server. Để trống = mặc định. Gateway tự chuyển sang cổng mới trong vài giây, sau đó làm lại bước 3 trong MT5 với địa chỉ mới.</p>
     </details>
 
     <div class="actions">
@@ -63,8 +66,9 @@
     <section class="card">
       <h2>3 · Việc cần làm trong MT5 (chỉ một lần)</h2>
       <ol class="steps">
-        <li>Vào <b>Tools › Options › Expert Advisors</b>, bật <b>Allow WebRequest for listed URL</b> và thêm địa chỉ <code id="gwUrl">http://127.0.0.1:47800</code> <button class="btn ghost sm" id="btnCopy" type="button">Chép</button></li>
+        <li>Vào <b>Tools › Options › Expert Advisors</b>, bật <b>Allow WebRequest for listed URL</b> và thêm địa chỉ <code id="gwUrl">http://127.0.0.1:47860</code> <button class="btn ghost sm" id="btnCopy" type="button">Chép</button> <button class="btn ghost sm" id="btnPortFocus" type="button">Trùng cổng? Đổi cổng</button></li>
         <li>Mở <b>Navigator</b>, kéo EA <b>OceanRelay</b> lên <b>một</b> chart bất kỳ. Nếu chưa thấy EA, bấm chuột phải vào Expert Advisors › Refresh.</li>
+        <li>Ở thẻ <b>Inputs</b> của EA, ô <b>InpGateway</b> phải đúng địa chỉ ở trên (EA mới cài đã đặt sẵn theo cổng mặc định). Nếu bạn đổi cổng sau khi đã gắn EA: chuột phải chart › Expert Advisors › Properties › Inputs, sửa <b>InpGateway</b>.</li>
         <li>Mặc định EA <b>chỉ theo dõi</b>, chưa vào lệnh. Thử trên tài khoản DEMO rồi mới bật <b>InpAllowTrading</b>.</li>
       </ol>
     </section>

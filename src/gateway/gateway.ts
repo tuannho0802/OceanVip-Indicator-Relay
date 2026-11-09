@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { type Logger, nullLogger } from '../server/log'
+import { DEFAULT_GW_PORT, MAX_PORT, MIN_GW_PORT, isGwPort } from '../shared/defaults'
 import { safeEqual, signSignal } from '../shared/hmac'
 
 export type GatewayConfig = {
@@ -45,8 +46,11 @@ export function loadGatewayConfig(env: NodeJS.ProcessEnv = process.env): Gateway
   if (key.length < 24) throw new Error('OCEAN_EA_KEY chưa đặt hoặc quá ngắn (phải trùng OCEAN_EA_KEY của Server)')
   const serverUrl = (env.OCEAN_SERVER_URL ?? '').replace(/\/+$/, '')
   if (!/^https?:\/\//.test(serverUrl)) throw new Error('OCEAN_SERVER_URL phải bắt đầu bằng http:// hoặc https://')
+  const rawPort = (env.OCEAN_GW_PORT ?? '').trim()
+  const port = rawPort === '' ? DEFAULT_GW_PORT : Number(rawPort)
+  if (!isGwPort(port)) throw new Error(`OCEAN_GW_PORT phải là số nguyên từ ${MIN_GW_PORT} đến ${MAX_PORT} (đang là "${rawPort}")`)
   return {
-    port: Number(env.OCEAN_GW_PORT ?? 47800),
+    port,
     serverUrl,
     key,
     tfs: (env.OCEAN_TFS ?? '').split(',').map((x) => x.trim().toUpperCase()).filter(Boolean),
@@ -91,12 +95,23 @@ export class Gateway {
     return this.liveMap ?? this.cfg.symbolMap
   }
 
+  /** Máy chủ HTTP cục bộ cho EA (đổi cổng thì dựng cái mới rồi đóng cái cũ). */
+  private srv: Server | null = null
+  /** Cổng đang nghe thật sự (0 = chưa nghe được cổng nào). */
+  listeningPort = 0
+  /** Cổng muốn nghe: lúc đầu theo gateway.env, về sau theo Server (trang Cài đặt). */
+  wantPort: number
+  /** Lý do chưa nghe được `wantPort` (ví dụ cổng đang bị chương trình khác chiếm); '' = không lỗi. */
+  portError = ''
+
   constructor(
     readonly cfg: GatewayConfig,
     private readonly fetchFn: FetchFn = fetch,
     private readonly clock: () => number = () => Math.floor(Date.now() / 1000),
     private readonly log: Logger = nullLogger,
-  ) {}
+  ) {
+    this.wantPort = cfg.port
+  }
 
   /** Xử lý một ping của EA. Trả về nội dung text cho EA. */
   async handlePing(body: string): Promise<{ status: number; text: string }> {
@@ -196,8 +211,86 @@ export class Gateway {
     }
   }
 
+  /**
+   * Hỏi Server cấu hình hiện hành (cổng Gateway, khung giờ, ánh xạ symbol) và báo cổng đang nghe thật.
+   * Nhờ vậy đổi cổng trên trang Cài đặt có hiệu lực trong vài giây, không phải sửa gateway.env hay cài lại.
+   * Không với tới Server (hoặc Server trả lỗi) thì giữ nguyên cấu hình hiện có.
+   */
+  async syncConfig(): Promise<void> {
+    let res: Response
+    try {
+      res = await this.fetchFn(`${this.cfg.serverUrl}/api/gw/config`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${this.cfg.key}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ port: this.listeningPort, error: this.portError }),
+        signal: AbortSignal.timeout(this.cfg.timeoutMs),
+      })
+    } catch {
+      return
+    }
+    if (!res.ok) return
+    let data: { config?: { tfs?: unknown; symbolMap?: unknown; gatewayPort?: unknown } }
+    try {
+      data = (await res.json()) as typeof data
+    } catch {
+      return
+    }
+    this.applyLiveConfig(data.config)
+    // Server chỉ gửi cổng khi người dùng đã đặt rõ (trang Cài đặt); null/thiếu = quay về cổng trong gateway.env của Gateway.
+    const p = data.config?.gatewayPort
+    this.wantPort = isGwPort(p) ? p : this.cfg.port
+  }
+
+  /** Đảm bảo đang nghe `wantPort`; chưa được thì thử lại (gọi định kỳ). Trả true nếu đang nghe đúng cổng. */
+  async ensureListening(): Promise<boolean> {
+    // wantPort 0 (chỉ khi test) = cổng ngẫu nhiên: đã nghe rồi thì giữ.
+    if (this.srv !== null && (this.listeningPort === this.wantPort || this.wantPort === 0)) return true
+    const port = this.wantPort
+    const next = this.createHttp()
+    const err = await new Promise<NodeJS.ErrnoException | null>((resolve) => {
+      next.once('error', (e: NodeJS.ErrnoException) => resolve(e))
+      next.listen(port, '127.0.0.1', () => resolve(null))
+    })
+    if (err) {
+      const msg = err.code === 'EADDRINUSE' ? `Cổng ${port} đang bị chương trình khác dùng` : err.code === 'EACCES' ? `Không được phép mở cổng ${port}` : `Không mở được cổng ${port}: ${err.message}`
+      if (msg !== this.portError) this.log.error(`${msg}. Đổi cổng ở trang Cài đặt (mục Nâng cao)${this.listeningPort ? `; tạm giữ cổng ${this.listeningPort}` : ''}`)
+      this.portError = msg
+      return false
+    }
+    next.on('error', (e) => this.log.error(`Gateway lỗi: ${e.message}`))
+    const old = this.srv
+    const oldPort = this.listeningPort
+    this.srv = next
+    this.listeningPort = (next.address() as { port: number }).port
+    this.portError = ''
+    if (old) {
+      old.close()
+      old.closeIdleConnections()
+      this.log.info(`đã đổi cổng Gateway ${oldPort} -> ${this.listeningPort}. EA cần dùng cổng mới (Allow WebRequest + InpGateway)`)
+    } else {
+      this.log.info(`Gateway nghe 127.0.0.1:${this.listeningPort}`)
+    }
+    return true
+  }
+
+  stop(): void {
+    this.srv?.close()
+    this.srv = null
+    this.listeningPort = 0
+  }
+
+  /** Mở cổng cục bộ ngay (dùng cho test và chạy đơn giản); cổng lấy từ cấu hình. */
   listen(): Server {
-    const srv = createServer(async (req: IncomingMessage, res) => {
+    const srv = this.createHttp()
+    srv.listen(this.cfg.port, '127.0.0.1', () => {
+      this.listeningPort = (srv.address() as { port: number }).port
+    })
+    this.srv = srv
+    return srv
+  }
+
+  private createHttp(): Server {
+    return createServer(async (req: IncomingMessage, res) => {
       const reply = (status: number, text: string, type = 'text/plain') => {
         res.writeHead(status, { 'content-type': `${type}; charset=utf-8` })
         res.end(text)
@@ -206,7 +299,7 @@ export class Gateway {
       const host = String(req.headers.host ?? '')
       if (req.headers.origin !== undefined || !/^(127\.0\.0\.1|localhost)(:\d+)?$/i.test(host)) return reply(403, 'ERR forbidden')
       if (req.method === 'GET' && req.url === '/v1/status') {
-        return reply(200, JSON.stringify({ ok: true, lastServerOk: this.lastServerOk, lastError: this.lastError }), 'application/json')
+        return reply(200, JSON.stringify({ ok: true, port: this.listeningPort, lastServerOk: this.lastServerOk, lastError: this.lastError }), 'application/json')
       }
       if (req.method === 'POST' && req.url === '/v1/ping') {
         const chunks: Buffer[] = []
@@ -221,8 +314,5 @@ export class Gateway {
       }
       reply(404, 'not found')
     })
-    // Chỉ nghe localhost: EA và Gateway cùng máy, không mở ra ngoài.
-    srv.listen(this.cfg.port, '127.0.0.1')
-    return srv
   }
 }

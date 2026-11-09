@@ -90,4 +90,68 @@ describe('trang Cài đặt trên giao diện', () => {
     expect(doc.getElementById('app')?.hidden).toBe(false)
     expect(doc.getElementById('banner')?.hidden).toBe(true)
   })
+  it('cổng Gateway: mặc định 47860 (không phải 47800), địa chỉ cho MT5 ghi đúng cổng', async () => {
+    const doc = await open('#setup')
+    const f = doc.getElementById('fPort') as HTMLInputElement
+    expect(f.value).toBe('')
+    expect(f.placeholder).toContain('47860')
+    expect(doc.getElementById('gwUrl')?.textContent).toBe('http://127.0.0.1:47860')
+    expect(doc.querySelector('.steps')?.textContent).not.toContain('47800')
+    expect(doc.getElementById('setupView')?.textContent).toContain('InpGateway')
+  })
+
+  it('đổi cổng Gateway: lưu xuống tệp, địa chỉ MT5 đổi theo, nhắc làm lại bước MT5; để trống = mặc định', async () => {
+    const doc = await open('#setup')
+    const f = doc.getElementById('fPort') as HTMLInputElement
+    f.value = '47901'
+    ;(doc.getElementById('btnSave') as HTMLButtonElement).click()
+    await sleep(500)
+    expect(readSettings(path.join(dir, 'settings.json')).gatewayPort).toBe(47901)
+    expect(doc.getElementById('gwUrl')?.textContent).toBe('http://127.0.0.1:47901')
+    expect(f.value).toBe('47901')
+    expect((doc.getElementById('adv') as HTMLDetailsElement).open).toBe(true)
+    const m = doc.getElementById('setupMsg')?.textContent ?? ''
+    expect(m).toContain('Cổng Gateway đã đổi sang 47901')
+    expect(m).toContain('Allow WebRequest')
+    // Để trống: quay về mặc định.
+    f.value = ''
+    ;(doc.getElementById('btnSave') as HTMLButtonElement).click()
+    await sleep(500)
+    expect(readSettings(path.join(dir, 'settings.json')).gatewayPort).toBeUndefined()
+    expect(doc.getElementById('gwUrl')?.textContent).toBe('http://127.0.0.1:47860')
+  })
+
+  it('cổng sai: hiện lỗi dễ hiểu, không lưu gì', async () => {
+    const doc = await open('#setup')
+    ;(doc.getElementById('fPort') as HTMLInputElement).value = '80'
+    ;(doc.getElementById('btnSave') as HTMLButtonElement).click()
+    await sleep(400)
+    const m = doc.getElementById('setupMsg')
+    expect(m?.textContent).toContain('Cổng Gateway phải là số nguyên từ 1024')
+    expect(m?.className).toContain('bad')
+    expect(readSettings(path.join(dir, 'settings.json'))).toEqual({})
+  })
+
+  it('nút \"Trùng cổng? Đổi cổng\" mở mục Nâng cao và đưa con trỏ vào ô cổng', async () => {
+    const doc = await open('#setup')
+    expect((doc.getElementById('adv') as HTMLDetailsElement).open).toBe(false)
+    ;(doc.getElementById('btnPortFocus') as HTMLButtonElement).click()
+    expect((doc.getElementById('adv') as HTMLDetailsElement).open).toBe(true)
+    expect(doc.activeElement?.id).toBe('fPort')
+  })
+
+  it('mục Trạng thái: Gateway chưa báo / đang nghe đúng cổng / không mở được cổng (bị chiếm)', async () => {
+    const report = (b: unknown) => fetch(`${base}/api/gw/config`, { method: 'POST', headers: { authorization: `Bearer ${EA_KEY}`, 'content-type': 'application/json' }, body: JSON.stringify(b) })
+    let doc = await open('#setup')
+    expect(doc.getElementById('checks')?.textContent).toContain('Chưa thấy Gateway báo về')
+    await report({ port: 47860, error: '' })
+    doc = await open('#setup')
+    expect(doc.getElementById('checks')?.textContent).toContain('Gateway đang nghe cổng 47860')
+    await report({ port: 0, error: 'Cổng 47860 đang bị chương trình khác dùng' })
+    doc = await open('#setup')
+    const t = doc.getElementById('checks')?.textContent ?? ''
+    expect(t).toContain('Gateway chưa mở được cổng 47860')
+    expect(t).toContain('đang bị chương trình khác dùng')
+    expect(doc.querySelector('#checks li.bad')).not.toBeNull()
+  })
 })

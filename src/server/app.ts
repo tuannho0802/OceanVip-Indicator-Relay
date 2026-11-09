@@ -114,6 +114,8 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
   const startedAt = clock()
   const store = new Store(cfg.dbFile)
   const fails = new FailLimiter(20, 300)
+  /** Gateway báo về qua /api/gw/config: lúc báo, cổng đang nghe thật (0 = chưa nghe được) và lỗi nếu có. Chỉ để trang Cài đặt hiển thị. */
+  const gwLink = { at: 0, port: 0, error: '' }
 
   /** Một đường duy nhất để một body alert thành một dòng tín hiệu, dù đến từ webhook trực tiếp hay từ Worker. */
   const ingest = (raw: string, now: number, ext?: { wid: number; receivedAt: number }) => {
@@ -254,6 +256,24 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
       return json(res, 200, { now, signals, config: { tfs: cfg.tfs, symbolMap: cfg.symbolMap } })
     }
 
+    // 3b) Gateway hỏi cấu hình (cổng Gateway, khung giờ, ánh xạ symbol) và báo cổng đang nghe thật + lỗi. Nhờ vậy đổi cổng trên
+    // trang Cài đặt có hiệu lực trong vài giây và trang Cài đặt hiện được "Gateway chưa mở được cổng X" thay vì im lặng.
+    if (p === '/api/gw/config' && req.method === 'POST') {
+      if (throttled()) return json(res, 429, { error: 'too_many_attempts' })
+      if (!(await sameSecret(bearer(req), cfg.eaKey))) return reject(401, 'bad_key', 'gateway')
+      let b: Record<string, unknown>
+      try {
+        b = JSON.parse(await readBody(req, 4 * 1024)) as Record<string, unknown>
+      } catch {
+        return json(res, 400, { error: 'bad_json' })
+      }
+      gwLink.at = now
+      gwLink.port = typeof b.port === 'number' && Number.isInteger(b.port) && b.port >= 0 && b.port <= 65535 ? b.port : 0
+      gwLink.error = typeof b.error === 'string' ? b.error.slice(0, 200) : ''
+      // gatewayPort null = chưa đặt rõ: Gateway dùng cổng trong gateway.env của nó.
+      return json(res, 200, { now, config: { tfs: cfg.tfs, symbolMap: cfg.symbolMap, gatewayPort: cfg.gatewayPortSet ? cfg.gatewayPort : null } })
+    }
+
     // 4) Công khai, chỉ đọc: giao diện xem tín hiệu và terminal (không đăng nhập).
     if (p === '/api/state' && req.method === 'GET') {
       const signals = store.recentSignals(50)
@@ -304,10 +324,15 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
 
     if (p === '/api/info' && req.method === 'GET') {
       const w = deps.workerStatus?.()
+      const local = deps.setup !== undefined && isLocalAdmin(req)
       return json(res, 200, {
         name: cfg.name, version: APP_VERSION, now, uptimeSec: now - startedAt,
         // local = người xem đang ngồi trên VPS (được mở trang Cài đặt); needsSetup = chưa có đường nhận tín hiệu nào.
-        local: deps.setup !== undefined && isLocalAdmin(req),
+        local,
+        // Tình trạng cổng Gateway: chỉ cho người ngồi trên VPS (người xem từ xa không cần biết cổng cục bộ).
+        gateway: local
+          ? { port: cfg.gatewayPort, listening: gwLink.at > 0 ? gwLink.port : null, error: gwLink.error, lastSeenAgoSec: gwLink.at > 0 ? now - gwLink.at : null }
+          : null,
         needsSetup: cfg.workerUrl === '' && cfg.webhookKey === '',
         baseUrl: cfg.publicUrl || deps.tunnelUrl?.() || null,
         serverId: cfg.serverId || null,

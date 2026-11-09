@@ -12,7 +12,7 @@ export const baseCfg = (over: Partial<ServerConfig> = {}): ServerConfig => ({
     port: 0, host: '127.0.0.1', name: 'test', dataDir: '.', dbFile: ':memory:', logDir: null, logLevel: 'error',
     eaKey: EA_KEY, webhookKey: WEBHOOK_KEY, syncKey: '', serverId: '', accounts: [], workerUrl: '', pollSec: 30,
     publicUrl: '', quickTunnel: false, cloudflared: '', maxAgeSec: 120, dedupeSec: 300, uiDir: 'ui',
-    settingsFile: path.join(os.tmpdir(), 'ocean-test-never-written.json'), symbolMap: null, tfs: null,
+    settingsFile: path.join(os.tmpdir(), 'ocean-test-never-written.json'), symbolMap: null, tfs: null, gatewayPort: 47860, gatewayPortSet: false,
     ...over,
 })
 

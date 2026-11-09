@@ -1,6 +1,7 @@
 ﻿<#
   Sinh/cập nhật server.env với khóa ngẫu nhiên. Khóa EA đã có thì giữ nguyên (nâng cấp không làm hỏng Gateway/EA).
-  Dùng: .\init-env.ps1 -Dir "C:\Program Files\OceanRelay" [-ConnectCode ocean1.xxxx] [-Accounts 900001,900002] [-Port 8090] [-WebhookKey <>=16 ký tự>]
+  Dùng: .\init-env.ps1 -Dir "C:\Program Files\OceanRelay" [-ConnectCode ocean1.xxxx] [-Accounts 900001,900002] [-Port 8090] [-WebhookKey <>=16 ký tự>] [-GatewayPort 47860]
+  Có -GatewayPort: ghi OCEAN_GW_PORT (cổng cục bộ của Gateway cho EA; Gateway hỏi Server rồi tự theo cổng này). Mặc định 47860, không phải 47800.
   Có -ConnectCode: ghi OCEAN_CONNECT_CODE (Worker + Server ID + khóa riêng nằm trong mã) và bật Quick Tunnel.
   Có -Accounts: ghi OCEAN_ACCOUNTS (Server chỉ giao tín hiệu cho các tài khoản MT5 này).
   Hai tham số trên KHÔNG bắt buộc: người dùng cuối thường cài xong rồi dán mã trên trang Cài đặt (http://127.0.0.1:<cổng>/#setup);
@@ -8,7 +9,7 @@
 #>
 param(
   [Parameter(Mandatory = $true)][string]$Dir,
-  [string]$ConnectCode = '', [string]$Accounts = '', [int]$Port = 8090, [string]$WebhookKey = ''
+  [string]$ConnectCode = '', [string]$Accounts = '', [int]$Port = 8090, [string]$WebhookKey = '', [int]$GatewayPort = 0
 )
 $ErrorActionPreference = 'Stop'
 function New-Secret([int]$bytes = 24) { $b = New-Object byte[] $bytes; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); ([Convert]::ToBase64String($b) -replace '[^A-Za-z0-9]', 'x') }
@@ -40,6 +41,11 @@ if ($WebhookKey -ne '') { $lines = Set-EnvLine $lines 'OCEAN_WEBHOOK_KEY' $Webho
 # Quick Tunnel bật sẵn (không cần tên miền): người dùng dán mã trên trang Cài đặt là Worker đẩy được tín hiệu về ngay.
 # Đã có OCEAN_QUICK_TUNNEL (tự đặt) hoặc OCEAN_PUBLIC_URL (tunnel có tên) thì giữ nguyên.
 if (-not ($lines | Where-Object { $_ -match '^(OCEAN_QUICK_TUNNEL|OCEAN_PUBLIC_URL)=' })) { $lines += 'OCEAN_QUICK_TUNNEL=1' }
+if ($GatewayPort -gt 0) {
+  if ($GatewayPort -lt 1024 -or $GatewayPort -gt 65535) { throw 'Cổng Gateway phải từ 1024 đến 65535.' }
+  if ($GatewayPort -eq $Port) { throw "Cổng Gateway ($GatewayPort) không được trùng cổng Server ($Port)." }
+  $lines = Set-EnvLine $lines 'OCEAN_GW_PORT' "$GatewayPort"
+}
 $lines = Set-EnvLine $lines 'OCEAN_PORT' "$Port"
 $lines | Set-Content -Encoding ASCII $f
 icacls $f /inheritance:r /grant:r '*S-1-5-18:(R)' '*S-1-5-32-544:(F)' | Out-Null   # chỉ SYSTEM + Administrators

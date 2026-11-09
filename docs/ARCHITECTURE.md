@@ -4,7 +4,7 @@
 TradingView ──POST /webhook?key=…──► Worker (D1) ──push ký HMAC──► Server (VPS, SQLite) ◄── Giao diện công khai
                                         ▲                              ▲
                   Server kéo bù /api/pull + /api/ack                   │ HTTPS/HTTP + khóa EA
-                                                                   Gateway (127.0.0.1:47800)
+                                                                   Gateway (127.0.0.1:47860)
                                                                        ▲ text khóa=giá trị
                                                                       EA (MT5)
 ```

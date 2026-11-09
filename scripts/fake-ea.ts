@@ -1,5 +1,6 @@
 // Giả lập EA khi chưa có MT5: gửi ping tới Gateway và in tín hiệu nhận được. Chạy: pnpm fake-ea
-const gw = process.env.OCEAN_GATEWAY ?? 'http://127.0.0.1:47800'
+import { DEFAULT_GW_PORT } from '../src/shared/defaults'
+const gw = process.env.OCEAN_GATEWAY ?? `http://127.0.0.1:${DEFAULT_GW_PORT}`
 const acks: string[] = []
 const tick = async () => {
   const body = [

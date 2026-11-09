@@ -22,6 +22,7 @@ API (`GET/POST /api/setup`) **chỉ nhận yêu cầu từ chính VPS**: kết n
 | `OCEAN_SRV_NAME` | OCEAN Relay | Tên hiển thị |
 | `OCEAN_WORKER_URL` + `OCEAN_SYNC_KEY` | trống | Dùng Worker; **phải đi cùng nhau**; SYNC_KEY ≥ 32 |
 | `OCEAN_QUICK_TUNNEL` | 0 (bộ cài ghi `1`) | `1` = tự chạy cloudflared Quick Tunnel và báo địa chỉ lên Worker |
+| `OCEAN_GW_PORT` | 47860 | Cổng Gateway Server yêu cầu Gateway nghe (1024-65535, không trùng `OCEAN_PORT`). Trang Cài đặt › Nâng cao › Cổng Gateway (lưu ở `settings.json`) thắng biến này. Chỉ khi đã đặt rõ thì Server mới ép cổng lên Gateway |
 | `OCEAN_PUBLIC_URL` | trống | Địa chỉ HTTPS công khai (tunnel có tên); tắt Quick Tunnel |
 | `OCEAN_CLOUDFLARED` | tự tải | Đường dẫn cloudflared tự chỉ định |
 | `OCEAN_POLL_SEC` | 30 nếu Worker đẩy được, 5 nếu chỉ kéo | Chu kỳ kéo bù (2–600) |
@@ -37,7 +38,7 @@ API (`GET/POST /api/setup`) **chỉ nhận yêu cầu từ chính VPS**: kết n
 |---|---|---|
 | `OCEAN_SERVER_URL` | **bắt buộc** | `http(s)://…` của Server |
 | `OCEAN_EA_KEY` | **bắt buộc** | Trùng Server |
-| `OCEAN_GW_PORT` | 47800 | Cổng cục bộ cho EA |
+| `OCEAN_GW_PORT` | 47860 | Cổng cục bộ cho EA (1024-65535). Cố ý KHÔNG phải 47800 để khỏi đụng Gateway khác cùng VPS. Khi chạy cùng Server, cổng đặt ở trang Cài đặt (hoặc `OCEAN_GW_PORT` trong `server.env`) thắng giá trị này: Gateway hỏi Server mỗi 5 giây và tự đổi cổng; Server chưa đặt cổng thì Gateway giữ cổng của nó |
 | `OCEAN_TFS` | trống = tất cả | Khung giờ được phép |
 | `OCEAN_SYMBOL_MAP` | trống | `XAUUSD=GOLD,…` |
 | `OCEAN_GW_TIMEOUT_MS` | 2500 | Timeout gọi Server |

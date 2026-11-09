@@ -1,4 +1,5 @@
 import { decodeConnectCode } from '../shared/connect'
+import { DEFAULT_GW_PORT } from '../shared/defaults'
 import { ConfigError, type ServerConfig, loadConfig } from './config'
 import type { Logger } from './log'
 import type { WorkerCheck } from './runtime'
@@ -15,6 +16,9 @@ export type SetupView = {
   accounts: string[]
   symbolMap: Record<string, string> | null
   tfs: string[] | null
+  /** Cổng Gateway hiện hành (EA nối tới) và cổng mặc định, để trang Cài đặt ghi đúng địa chỉ cho Allow WebRequest. */
+  gatewayPort: number
+  defaultGatewayPort: number
   /** 'ui' = đặt trên giao diện; 'env' = từ server.env; 'none' = chưa cài đặt. */
   source: 'ui' | 'env' | 'none'
   mode: 'quick' | 'public' | 'none'
@@ -52,6 +56,8 @@ export class SetupController {
       accounts: [...cfg.accounts],
       symbolMap: cfg.symbolMap,
       tfs: cfg.tfs,
+      gatewayPort: cfg.gatewayPort,
+      defaultGatewayPort: DEFAULT_GW_PORT,
       source: Object.keys(s).length > 0 ? 'ui' : cfg.workerUrl ? 'env' : 'none',
       mode: cfg.publicUrl ? 'public' : cfg.quickTunnel ? 'quick' : 'none',
     }
@@ -84,7 +90,7 @@ export class SetupController {
     // Những thứ không đổi lúc đang chạy (cổng, đường dẫn dữ liệu, khóa EA) giữ nguyên.
     const { port, host, dataDir, dbFile, logDir, logLevel, eaKey, uiDir, ...live } = next
     Object.assign(cfg, live)
-    log.info(`đã lưu cài đặt từ giao diện: worker=${cfg.workerUrl ? 'có' : 'không'} id=${cfg.serverId || '-'} tàiKhoản=${cfg.accounts.length} symbolMap=${cfg.symbolMap ? Object.keys(cfg.symbolMap).length : 'mặc định'} tfs=${cfg.tfs ? cfg.tfs.join(',') || 'tất cả' : 'mặc định'}`)
+    log.info(`đã lưu cài đặt từ giao diện: worker=${cfg.workerUrl ? 'có' : 'không'} id=${cfg.serverId || '-'} tàiKhoản=${cfg.accounts.length} symbolMap=${cfg.symbolMap ? Object.keys(cfg.symbolMap).length : 'mặc định'} tfs=${cfg.tfs ? cfg.tfs.join(',') || 'tất cả' : 'mặc định'} cổngGateway=${cfg.gatewayPort}`)
     const worker = await this.d.apply()
     return { ok: true, view: this.view(), worker }
   }
