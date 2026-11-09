@@ -1,4 +1,4 @@
-# Cài OCEAN Relay Server thành tác vụ chạy lúc khởi động máy (Windows, PowerShell Administrator).
+﻿# Cài OCEAN Relay Server thành tác vụ chạy lúc khởi động máy (Windows, PowerShell Administrator).
 # Dùng: .\install-server.ps1 [-InstallDir "C:\Program Files\OceanRelay"] [-Port 8090] [-WorkerUrl https://...workers.dev -SyncKey <>=32 ký tự>]
 param([string]$InstallDir = "$env:ProgramFiles\OceanRelay", [int]$Port = 8090, [string]$WorkerUrl = '', [string]$SyncKey = '', [string]$WebhookKey = '')
 $ErrorActionPreference = 'Stop'

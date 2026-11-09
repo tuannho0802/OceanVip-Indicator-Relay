@@ -1,4 +1,4 @@
-\xef\xbb\xbf<#
+﻿<#
   Gửi một alert mẫu (đúng khuôn text một dòng của indicator OCEAN VIP) vào webhook để thử cả chuỗi
   TradingView -> Worker -> Server -> giao diện. Không đặt lệnh: EA mặc định chỉ theo dõi (InpAllowTrading=false).
     .\test-alert.ps1 -WebhookUrl "https://ocean-relay.xxx.workers.dev/webhook?key=<WEBHOOK_KEY>"

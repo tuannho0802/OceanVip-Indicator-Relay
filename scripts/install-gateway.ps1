@@ -1,4 +1,4 @@
-# Cài OCEAN Relay Gateway (chạy cùng máy với MT5). PowerShell Administrator.
+﻿# Cài OCEAN Relay Gateway (chạy cùng máy với MT5). PowerShell Administrator.
 # Dùng: .\install-gateway.ps1 -ServerUrl http://127.0.0.1:8090 -EaKey <OCEAN_EA_KEY>
 param(
   [Parameter(Mandatory)][string]$ServerUrl,

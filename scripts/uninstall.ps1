@@ -1,4 +1,4 @@
-# Gỡ tác vụ OCEAN Relay (giữ nguyên dữ liệu trong C:\ProgramData\OceanRelay).
+﻿# Gỡ tác vụ OCEAN Relay (giữ nguyên dữ liệu trong C:\ProgramData\OceanRelay).
 foreach ($n in 'Ocean Relay Server', 'Ocean Relay Gateway') {
   Stop-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue
   Unregister-ScheduledTask -TaskName $n -Confirm:$false -ErrorAction SilentlyContinue

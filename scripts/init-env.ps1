@@ -1,4 +1,4 @@
-<#
+﻿<#
   Sinh server.env (và gateway.env cho cùng máy) với khóa ngẫu nhiên. Không ghi đè tệp đã có.
   Dùng: .\init-env.ps1 -Dir "C:\Program Files\OceanRelay" [-WorkerUrl https://ocean-relay.xxx.workers.dev -SyncKey <>=32 ký tự>] [-Port 8090]
 #>

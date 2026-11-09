@@ -1,4 +1,4 @@
-\xef\xbb\xbf<#
+﻿<#
   Kiểm tra nhanh Server trên VPS sau khi cài (không cần quyền Administrator):
     .\check-vps.ps1 [-Port 8090] [-WorkerUrl https://ocean-relay.xxx.workers.dev]
   In: Server sống?, phiên bản, Quick Tunnel (địa chỉ trycloudflare), Worker kéo bù lần cuối, số tín hiệu gần đây.
