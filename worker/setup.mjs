@@ -25,12 +25,26 @@ if (webhookKey.length < 16 || syncKey.length < 32) throw new Error('WEBHOOK_KEY 
 const cfgPath = new URL('./wrangler.jsonc', import.meta.url)
 let cfg = readFileSync(cfgPath, 'utf8')
 if (cfg.includes('00000000-0000-0000-0000-000000000000')) {
-  const out = run(['d1', 'create', 'ocean-relay'])
-  const id = /database_id"?\s*[:=]\s*"([0-9a-f-]{36})"/i.exec(out)?.[1]
-  if (!id) throw new Error(`Không đọc được database_id từ:\n${out}`)
+  let id = ''
+  try {
+    const out = run(['d1', 'create', 'ocean-relay'])
+    id = /database_id"?\s*[:=]\s*"([0-9a-f-]{36})"/i.exec(out)?.[1] ?? ''
+    if (!id) throw new Error(`Không đọc được database_id từ:\n${out}`)
+    console.log('Đã tạo D1', id)
+  } catch (e) {
+    // Chạy lại setup (hoặc D1 tạo từ lần trước nhưng wrangler.jsonc chưa ghi ID): dùng lại D1 đã có thay vì dừng.
+    if (!/already exists/i.test(String(e?.message))) throw e
+    try {
+      const list = JSON.parse(run(['d1', 'list', '--json']))
+      id = list.find((d) => d.name === 'ocean-relay')?.uuid ?? ''
+    } catch {
+      /* rơi xuống thông báo lỗi bên dưới */
+    }
+    if (!id) throw new Error('D1 "ocean-relay" đã tồn tại nhưng không đọc được ID. Chạy `npx wrangler d1 list`, rồi dán uuid vào database_id trong worker/wrangler.jsonc và chạy lại `npm run setup`.')
+    console.log('D1 ocean-relay đã có sẵn, dùng lại:', id)
+  }
   cfg = cfg.replace('00000000-0000-0000-0000-000000000000', id)
   writeFileSync(cfgPath, cfg)
-  console.log('Đã tạo D1', id)
 }
 run(['d1', 'execute', 'ocean-relay', '--remote', '--file', 'schema.sql'])
 run(['secret', 'put', 'WEBHOOK_KEY'], webhookKey)
@@ -40,6 +54,7 @@ const url = /https:\/\/[A-Za-z0-9.-]+\.workers\.dev/.exec(dep)?.[0] ?? 'https://
 
 writeFileSync(new URL('./.ocean-master.json', import.meta.url), JSON.stringify({ url, syncKey }, null, 2))
 console.log('\nXong. Lưu các giá trị sau (KHÔNG commit):')
+console.log('  (Setup sinh khóa MỚI: mã ocean1.… đã phát từ trước không còn dùng được, hãy cấp lại bằng npm run issue.)')
 console.log(`  Webhook URL (dán vào TradingView): ${url}/webhook?key=${webhookKey}`)
 console.log('  Alert TradingView: chọn "Any alert() function call"')
 console.log('  Khóa gốc SYNC_KEY đã ghi vào worker/.ocean-master.json (không đưa cho người dùng).')

@@ -139,8 +139,50 @@ async function publicPage(env: Env, now: number): Promise<Response> {
     .join('')
   const html = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OCEAN Relay · Worker</title>
 <style>body{margin:0;padding:16px;font:14px/1.45 system-ui,sans-serif;background:#07131c;color:#e6f4f8}a{color:#19c3b1}h1{font-size:16px;letter-spacing:.06em}ul{list-style:none;padding:0}li{background:#0d2230;border:1px solid #17394d;border-radius:12px;padding:10px 12px;margin:0 0 10px}span{color:#7fa3b3;font-size:12px}pre{margin:6px 0 0;white-space:pre-wrap;word-break:break-all;font:12px ui-monospace,monospace;color:#9fc3d1}</style></head>
-<body><h1>OCEAN<span style="color:#19c3b1"> RELAY</span> · Worker</h1><p>Hộp thư dự phòng (công khai, chỉ đọc).</p>
+<body><h1>OCEAN<span style="color:#19c3b1"> RELAY</span> · Worker</h1><p>Hộp thư dự phòng (công khai, chỉ đọc). <a href="/help">Hướng dẫn vận hành Worker</a></p>
 <ul>${items || '<li>Chưa có tín hiệu nào.</li>'}</ul></body></html>`
+  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...SECURITY } })
+}
+
+/** Trang hướng dẫn vận hành Worker (công khai, chỉ có lệnh mẫu, KHÔNG chứa khóa nào) để quên thì mở lại xem. */
+function helpPage(): Response {
+  const html = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OCEAN Relay · Hướng dẫn Worker</title>
+<style>body{margin:0;padding:16px;font:14px/1.5 system-ui,sans-serif;background:#07131c;color:#e6f4f8;max-width:760px}a{color:#19c3b1}h1{font-size:16px;letter-spacing:.06em}h2{font-size:14px;margin:22px 0 6px;color:#19c3b1}pre{background:#0d2230;border:1px solid #17394d;border-radius:10px;padding:10px 12px;white-space:pre-wrap;word-break:break-all;font:12px ui-monospace,monospace;color:#cfe8f0}code{font:12px ui-monospace,monospace;color:#9fc3d1}.warn{border-left:3px solid #e0a43a;padding:4px 10px;color:#f0d9a8}</style></head>
+<body><h1>OCEAN<span style="color:#19c3b1"> RELAY</span> · Hướng dẫn Worker</h1>
+<p>Các lệnh dưới đây chạy trên <b>máy dev</b> (máy có mã nguồn và đã đăng nhập Cloudflare), không chạy trên VPS. <a href="/">Về hộp thư tín hiệu</a></p>
+
+<h2>1 · Tạo Worker (chỉ làm một lần)</h2>
+<pre>npm install
+cd worker
+npm install
+npx wrangler login
+npm run setup</pre>
+<p><code>setup</code> tạo database D1, sinh khóa, deploy Worker, in <b>Webhook URL</b> (dán vào TradingView) và ghi khóa gốc vào <code>worker/.ocean-master.json</code>. Tệp này <b>không commit, không gửi cho ai</b>. Chưa có tệp này thì lệnh <code>issue</code> báo "Chưa có worker/.ocean-master.json".</p>
+
+<h2>2 · Cấp mã kết nối cho một VPS</h2>
+<pre>cd worker
+npm run issue -- "Tên VPS"</pre>
+<p>In ra Server ID và mã <code>ocean1.…</code>. Mỗi VPS một mã riêng, gửi RIÊNG cho người dùng VPS đó. Chọn Server ID tự đặt: thêm <code>--id ten-vps</code> (chữ thường, số, gạch ngang, 3-40 ký tự).</p>
+
+<h2>3 · Dán mã trên VPS</h2>
+<p>Mở <code>http://127.0.0.1:8090/#setup</code> <b>ngay trên VPS</b> (xem từ xa sẽ không thấy nút Cài đặt), dán mã vào ô "Mã kết nối", bấm <b>Lưu và kiểm tra kết nối</b>. Huy hiệu Worker báo thông là xong.</p>
+
+<h2>4 · Xem VPS nào đã kết nối</h2>
+<pre>cd worker
+npm run issue -- --list</pre>
+<p>Hiện từng Server: thấy lần cuối khi nào, đã báo địa chỉ chưa, đang chờ bao nhiêu tín hiệu.</p>
+
+<h2>5 · TradingView</h2>
+<p>Alert của indicator → Notifications → Webhook URL = URL do <code>setup</code> in ra (dạng <code>https://…workers.dev/webhook?key=…</code>), chọn <i>Any alert() function call</i>. Không đăng URL này ở nơi công khai.</p>
+
+<h2>Sự cố thường gặp</h2>
+<pre>Missing script: "issue"        -> bạn đang ở thư mục gốc; chạy: cd worker
+Chưa có .ocean-master.json     -> chạy npm run setup trước
+Trang Cài đặt báo 401 / sai mã -> cấp lại mã bằng npm run issue
+Thu hồi một VPS                -> đổi SYNC_KEY gốc rồi cấp lại mã cho các VPS còn dùng
+                                  (node setup.mjs --webhook-key ... --sync-key ...)</pre>
+<p class="warn">Worker lỗi hoặc cần deploy lại: <code>cd worker</code> rồi <code>npm run deploy</code>.</p>
+</body></html>`
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...SECURITY } })
 }
 
@@ -240,6 +282,7 @@ export async function handle(req: Request, env: Env, ctx: Ctx, deps: { now?: () 
       })
     }
     if (p === '/') return publicPage(env, now)
+    if (p === '/help') return helpPage()
   }
   return json(404, { error: 'not_found' })
 }

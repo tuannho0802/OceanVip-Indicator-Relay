@@ -140,6 +140,17 @@ describe('Worker: bảo mật & công khai', () => {
     expect((await setTunnel('https://abc-def.trycloudflare.com/')).status).toBe(200)
     expect((await setTunnel(null)).status).toBe(200)
   })
+  it('trang /help có hướng dẫn vận hành Worker, không chứa khóa, POST thì 404', async () => {
+    const res = await worker('/help')
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html).toContain('npm run setup')
+    expect(html).toContain('npm run issue')
+    expect(html).toContain('cd worker')
+    expect(html).not.toContain(SYNC_KEY)
+    expect((await (await worker('/')).text())).toContain('href="/help"')
+    expect((await worker('/help', { method: 'POST' })).status).toBe(404)
+  })
   it('trang công khai chỉ đọc và thoát ký tự HTML trong body alert (không XSS)', async () => {
     await hook('<script>alert(1)</script> | "><img src=x onerror=alert(2)>')
     await settle()
@@ -148,6 +159,20 @@ describe('Worker: bảo mật & công khai', () => {
     expect(html).not.toContain('<img src=x')
     expect(html).toContain('&#60;script&#62;')
     expect((await worker('/', { method: 'POST' })).status).toBe(404)
+  })
+})
+
+describe('Worker: trang hướng dẫn /help', () => {
+  it('công khai, có lệnh cấp mã, không lộ khóa; trang chủ có liên kết tới', async () => {
+    const r = await worker('/help')
+    expect(r.status).toBe(200)
+    const html = await r.text()
+    expect(html).toContain('npm run setup')
+    expect(html).toContain('npm run issue')
+    expect(html).toContain('.ocean-master.json')
+    expect(html).not.toContain(SYNC_KEY)
+    expect((await worker('/help', { method: 'POST' })).status).toBe(404)
+    expect(await (await worker('/')).text()).toContain('href="/help"')
   })
 })
 
