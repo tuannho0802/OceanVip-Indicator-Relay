@@ -1,9 +1,12 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http'
+import { type Logger, nullLogger } from '../server/log'
+import { safeEqual, signSignal } from '../shared/hmac'
 
 export type GatewayConfig = {
   port: number
   serverUrl: string
-  token: string
+  /** Khóa EA (OCEAN_EA_KEY, trùng Server): chứng minh với Server, và kiểm chữ ký từng tín hiệu nhận về. */
+  key: string
   /** Khung giờ được phép (rỗng = tất cả). Khung khác được ack `skipped_tf` và không đưa cho EA. */
   tfs: string[]
   /** XAUUSD=GOLD,... ánh xạ tên symbol của TradingView sang tên ở sàn. */
@@ -25,6 +28,8 @@ export type CloudSignal = {
   tp3: number | null
   tp: number | null
   status: string | null
+  /** Chữ ký HMAC của Server (gắn với terminal). */
+  sig?: string
 }
 
 type Ack = { id: number; result: string }
@@ -36,14 +41,14 @@ export function loadGatewayConfig(env: NodeJS.ProcessEnv = process.env): Gateway
     const [a, b] = pair.split('=').map((x) => x?.trim())
     if (a && b) map[a.toUpperCase()] = b
   }
-  const token = env.OCEAN_GATEWAY_TOKEN ?? ''
-  if (token.length < 16) throw new Error('OCEAN_GATEWAY_TOKEN chưa đặt hoặc quá ngắn')
+  const key = (env.OCEAN_EA_KEY ?? '').trim()
+  if (key.length < 24) throw new Error('OCEAN_EA_KEY chưa đặt hoặc quá ngắn (phải trùng OCEAN_EA_KEY của Server)')
   const serverUrl = (env.OCEAN_SERVER_URL ?? '').replace(/\/+$/, '')
   if (!/^https?:\/\//.test(serverUrl)) throw new Error('OCEAN_SERVER_URL phải bắt đầu bằng http:// hoặc https://')
   return {
     port: Number(env.OCEAN_GW_PORT ?? 47800),
     serverUrl,
-    token,
+    key,
     tfs: (env.OCEAN_TFS ?? '').split(',').map((x) => x.trim().toUpperCase()).filter(Boolean),
     symbolMap: map,
     timeoutMs: Number(env.OCEAN_GW_TIMEOUT_MS ?? 2500),
@@ -79,6 +84,7 @@ export class Gateway {
     readonly cfg: GatewayConfig,
     private readonly fetchFn: FetchFn = fetch,
     private readonly clock: () => number = () => Math.floor(Date.now() / 1000),
+    private readonly log: Logger = nullLogger,
   ) {}
 
   /** Xử lý một ping của EA. Trả về nội dung text cho EA. */
@@ -108,7 +114,7 @@ export class Gateway {
     try {
       res = await this.fetchFn(`${this.cfg.serverUrl}/api/gw/ping`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${this.cfg.token}`, 'content-type': 'application/json' },
+        headers: { authorization: `Bearer ${this.cfg.key}`, 'content-type': 'application/json' },
         body: JSON.stringify({
           tid, login, server,
           balance: nz(kv.bal), equity: nz(kv.eq), margin: nz(kv.mg), free_margin: nz(kv.fm),
@@ -118,11 +124,13 @@ export class Gateway {
       })
     } catch (e) {
       this.lastError = `server: ${(e as Error).message}`
+      this.log.warn(`ping lỗi: ${this.lastError}`)
       this.pendingAcks.set(tid, acks.slice(-200))
       return { status: 502, text: 'ERR server_unreachable' }
     }
     if (!res.ok) {
       this.lastError = `server HTTP ${res.status}`
+      this.log.warn(`ping bị Server từ chối: HTTP ${res.status}${res.status === 401 ? ' (OCEAN_EA_KEY không khớp Server?)' : ''}`)
       this.pendingAcks.set(tid, acks.slice(-200))
       return { status: 502, text: `ERR server_${res.status}` }
     }
@@ -134,6 +142,13 @@ export class Gateway {
     const lines = ['OK']
     const skipped: Ack[] = []
     for (const s of data.signals) {
+      // Chỉ nhận tín hiệu do chính Server của bạn ký (cùng khóa EA, gắn với terminal): bị sửa/giả/phát lại thì bỏ.
+      const want = await signSignal(this.cfg.key, tid, s)
+      if (typeof s.sig !== 'string' || !safeEqual(s.sig, want)) {
+        this.log.warn(`bỏ tín hiệu #${s.id}: chữ ký sai`)
+        skipped.push({ id: s.id, result: 'bad_sig' })
+        continue
+      }
       const tf = (s.tf ?? '').toUpperCase()
       if (this.cfg.tfs.length > 0 && !this.cfg.tfs.includes(tf)) {
         skipped.push({ id: s.id, result: 'skipped_tf' })
@@ -158,6 +173,9 @@ export class Gateway {
         res.writeHead(status, { 'content-type': `${type}; charset=utf-8` })
         res.end(text)
       }
+      // Cổng cục bộ chỉ dành cho EA: trình duyệt (có Origin) hoặc Host lạ (DNS rebinding) bị từ chối.
+      const host = String(req.headers.host ?? '')
+      if (req.headers.origin !== undefined || !/^(127\.0\.0\.1|localhost)(:\d+)?$/i.test(host)) return reply(403, 'ERR forbidden')
       if (req.method === 'GET' && req.url === '/v1/status') {
         return reply(200, JSON.stringify({ ok: true, lastServerOk: this.lastServerOk, lastError: this.lastError }), 'application/json')
       }

@@ -1,21 +1,37 @@
 //+------------------------------------------------------------------+
-//| OceanRelay.mq5  v0.1.0  (GIAI DOAN 1: TRACKING, CHUA DANH LENH)  |
+//| OceanRelay.mq5  v0.2.0  (GIAI DOAN 2: DANH LENH THEO TIN HIEU)   |
 //| Ping Gateway cuc bo moi InpPingSec giay: gui tai khoan + lenh    |
-//| dang mo, nhan tin hieu OCEAN, ghi log va ack "received".         |
-//| KHONG gui lenh len san. Chua duoc bien dich tren MT5 that.       |
+//| dang mo, nhan tin hieu OCEAN (da duoc Gateway kiem chu ky HMAC), |
+//| mo 3 lenh cung Entry/SL voi TP1/TP2/TP3, ack ket qua.            |
+//| EA chi noi chuyen voi Gateway/Server tren VPS (khong goi Worker).|
+//| MAC DINH InpAllowTrading=false: chi theo doi, KHONG dat lenh.    |
+//| Chua duoc bien dich tren MT5 that: thu tren DEMO truoc.          |
 //| Dat http://127.0.0.1:47800 vao Tools > Options > Expert Advisors |
 //| > Allow WebRequest for listed URL.                               |
 //+------------------------------------------------------------------+
 #property copyright "Ocean Relay"
-#property version "1.0"
+#property version "2.0"
 #property strict
 
-#define EA_VER "0.1.0"
+#include <Trade\Trade.mqh>
+
+#define EA_VER "0.2.0"
 
 input string InpGateway = "http://127.0.0.1:47800"; // Gateway cuc bo (phai nam trong Allow WebRequest)
 input int    InpPingSec = 2;                         // Nhip ping (giay, toi thieu 1)
 input int    InpTimeoutMs = 1500;                    // Timeout WebRequest (ms)
 input string InpTerminalId = "";                     // De trong = login@server
+
+input group "=== DANH LENH (mac dinh TAT) ==="
+input bool   InpAllowTrading = false;                // CONG TAC TONG: false = chi theo doi, khong dat lenh
+input double InpLotPerOrder  = 0.01;                 // Lot moi lenh (moi tin hieu mo 3 lenh = 3 x lot nay)
+input double InpMaxTotalLots = 0.30;                 // Tong lot cac lenh dang mo cua EA (magic nay) toi da
+input int    InpMaxAgeSec    = 60;                   // Bo tin hieu cu hon so giay nay
+input int    InpMaxDevPoints = 500;                  // Bo neu gia hien tai lech Entry qua so point nay (0 = khong kiem)
+input int    InpSlippagePts  = 30;                   // Truot gia toi da khi khop (point)
+input bool   InpTP3Only      = false;                // true: chi mo 1 lenh toan bo (lot x3) voi TP3
+input long   InpMagic        = 20261109;             // Magic number cua EA (de nhan lenh cua chinh no)
+input string InpComment      = "OCEAN";              // Tien to comment lenh
 
 string   g_acks = "";            // "12:received,13:received" gui kem o ping ke tiep
 ulong    g_seen[64];             // id tin hieu da xu ly (tranh log lap khi Gateway giao lai truoc khi ack toi noi)
@@ -23,6 +39,7 @@ int      g_seenN = 0;
 ulong    g_nextPingMs = 0;
 int      g_fail = 0;
 string   g_last = "chua co tin hieu";
+CTrade   g_trade;
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -31,7 +48,11 @@ int OnInit()
    if(!EventSetTimer(1)) { Print("OceanRelay: EventSetTimer that bai"); return INIT_FAILED; }
    // Tre ngau nhien 0-2 giay truoc ping dau de nhieu EA khong ban cung luc.
    g_nextPingMs = GetTickCount64() + (ulong)(MathRand() % 2000);
-   Print("OceanRelay ", EA_VER, " san sang. Gateway=", InpGateway, " (chi tracking, khong danh lenh)");
+   g_trade.SetExpertMagicNumber(InpMagic);
+   g_trade.SetDeviationInPoints(InpSlippagePts);
+   g_trade.SetAsyncMode(false);
+   Print("OceanRelay ", EA_VER, " san sang. Gateway=", InpGateway, InpAllowTrading ? " | DANH LENH: BAT" : " | DANH LENH: TAT (chi theo doi)");
+   if(InpAllowTrading && !TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)) Print("OceanRelay: CANH BAO - Algo Trading dang tat tren terminal.");
    return INIT_SUCCEEDED;
   }
 
@@ -129,9 +150,19 @@ void AddAck(ulong id, string result)
   }
 
 //+------------------------------------------------------------------+
+//| Id tin hieu da xu ly: ghi vao Global Variable TRUOC khi goi san, |
+//| nen EA khoi dong lai / Gateway giao lai deu khong mo lenh lan 2. |
+//+------------------------------------------------------------------+
+string GvName(ulong id) { return "OCEAN_" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "_" + (string)id; }
+bool Done(ulong id) { return GlobalVariableCheck(GvName(id)); }
+void MarkDone(ulong id) { GlobalVariableSet(GvName(id), (double)TimeCurrent()); }
+
+//+------------------------------------------------------------------+
 //| Dong tin hieu:                                                   |
 //|  S|id|side|symbol|tf|entry|sl|tp1|tp2|tp3|ageSec                 |
 //|  U|id|side|status|symbol|tf|entry|sl|tp|ageSec                   |
+//| Ket qua ack: opened:N | trading_off | too_old | price_dev |       |
+//|  bad_levels | bad_stops | no_symbol | max_lots | failed:<ma>      |
 //+------------------------------------------------------------------+
 void HandleResponse(string text)
   {
@@ -144,25 +175,92 @@ void HandleResponse(string text)
       if(nf < 3) continue;
       ulong id = (ulong)StringToInteger(f[1]);
       if(id == 0) continue;
-      if(Seen(id)) { AddAck(id, "received"); continue; }
+      if(Seen(id) || Done(id)) { AddAck(id, "received"); continue; }
       Remember(id);
+      string res = "received";
       if(f[0] == "S" && nf >= 11)
-         OnEntrySignal(id, f[2], f[3], f[4], StringToDouble(f[5]), StringToDouble(f[6]),
-                       StringToDouble(f[7]), StringToDouble(f[8]), StringToDouble(f[9]), (int)StringToInteger(f[10]));
+         res = OnEntrySignal(id, f[2], f[3], f[4], StringToDouble(f[5]), StringToDouble(f[6]),
+                             StringToDouble(f[7]), StringToDouble(f[8]), StringToDouble(f[9]), (int)StringToInteger(f[10]));
       else if(f[0] == "U" && nf >= 10)
          OnUpdateSignal(id, f[2], f[3], f[4], f[5], StringToDouble(f[6]), StringToDouble(f[7]), StringToDouble(f[8]));
-      AddAck(id, "received"); // GIAI DOAN 1: chi xac nhan da nhan, chua danh lenh
+      AddAck(id, res);
      }
   }
 
-// GIAI DOAN 2 se mo 3 lenh o day (cung entry/SL, TP1/TP2/TP3). Hien tai chi ghi nhan.
-void OnEntrySignal(ulong id, string side, string symbol, string tf, double entry, double sl,
-                   double tp1, double tp2, double tp3, int ageSec)
+double TotalOpenLots()
+  {
+   double t = 0;
+   for(int i = 0; i < PositionsTotal(); i++)
+     {
+      ulong tk = PositionGetTicket(i);
+      if(tk == 0 || !PositionSelectByTicket(tk)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) == InpMagic) t += PositionGetDouble(POSITION_VOLUME);
+     }
+   return t;
+  }
+
+double NormVol(string sym, double v)
+  {
+   double mn = SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN), mx = SymbolInfoDouble(sym, SYMBOL_VOLUME_MAX), st = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
+   if(st <= 0) st = 0.01;
+   v = MathFloor(v / st + 1e-9) * st;
+   return NormalizeDouble(MathMax(mn, MathMin(mx, v)), 2);
+  }
+
+//+------------------------------------------------------------------+
+//| Mo 3 lenh (hoac 1 lenh neu InpTP3Only) cung SL, TP1/TP2/TP3.     |
+//| Tra ve chuoi ket qua de ack. Moi buoc chan deu tra ve ma ro rang.|
+//+------------------------------------------------------------------+
+string OnEntrySignal(ulong id, string side, string symbol, string tf, double entry, double sl,
+                     double tp1, double tp2, double tp3, int ageSec)
   {
    g_last = StringFormat("#%I64u %s %s %s entry=%.2f sl=%.2f tp1=%.2f tp2=%.2f tp3=%.2f (%ds)", id, side, symbol, tf, entry, sl, tp1, tp2, tp3, ageSec);
    Print("OceanRelay TIN HIEU: ", g_last);
+   if(!InpAllowTrading) return "trading_off";
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED)) { Print("OceanRelay: Algo Trading tat"); return "trading_off"; }
+   if(ageSec > InpMaxAgeSec) { Print("OceanRelay: bo #", id, " qua cu (", ageSec, "s)"); return "too_old"; }
+   if(!SymbolSelect(symbol, true)) { Print("OceanRelay: khong co symbol ", symbol, " (kiem OCEAN_SYMBOL_MAP o Gateway)"); return "no_symbol"; }
+
+   bool buy = (side == "buy");
+   double ask = SymbolInfoDouble(symbol, SYMBOL_ASK), bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+   double pt = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   int dg = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   if(ask <= 0 || bid <= 0 || pt <= 0) return "no_symbol";
+   double px = buy ? ask : bid;
+
+   if(InpMaxDevPoints > 0 && MathAbs(px - entry) > InpMaxDevPoints * pt)
+     { Print("OceanRelay: bo #", id, " gia lech Entry ", DoubleToString(MathAbs(px - entry) / pt, 0), " point"); return "price_dev"; }
+   // SL/TP phai dung phia so voi GIA HIEN TAI (Server da kiem phia theo Entry, day la kiem lan 2 theo gia that)
+   bool ok = buy ? (sl < px && tp1 > px && tp1 <= tp2 && tp2 <= tp3) : (sl > px && tp1 < px && tp1 >= tp2 && tp2 >= tp3);
+   if(!ok) { Print("OceanRelay: bo #", id, " SL/TP sai phia so voi gia hien tai"); return "bad_levels"; }
+   double minDist = (double)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL) * pt;
+   if(MathAbs(px - sl) < minDist || MathAbs(tp1 - px) < minDist) { Print("OceanRelay: bo #", id, " SL/TP gan hon stops level"); return "bad_stops"; }
+
+   int n = InpTP3Only ? 1 : 3;
+   double lotEach = NormVol(symbol, InpTP3Only ? InpLotPerOrder * 3 : InpLotPerOrder);
+   if(TotalOpenLots() + lotEach * n > InpMaxTotalLots + 1e-9) { Print("OceanRelay: bo #", id, " vuot InpMaxTotalLots"); return "max_lots"; }
+
+   // Ghi nho id TRUOC khi goi san: loi giua chung thi khong bao gio mo lap.
+   MarkDone(id);
+   g_trade.SetTypeFillingBySymbol(symbol);
+   double tps[3]; tps[0] = tp1; tps[1] = tp2; tps[2] = tp3;
+   int opened = 0; uint lastRc = 0;
+   for(int k = 0; k < n; k++)
+     {
+      double tp = InpTP3Only ? tp3 : tps[k];
+      string cm = StringFormat("%s#%I64u/TP%d", InpComment, id, InpTP3Only ? 3 : k + 1);
+      bool sent = buy ? g_trade.Buy(lotEach, symbol, 0, NormalizeDouble(sl, dg), NormalizeDouble(tp, dg), cm)
+                      : g_trade.Sell(lotEach, symbol, 0, NormalizeDouble(sl, dg), NormalizeDouble(tp, dg), cm);
+      lastRc = g_trade.ResultRetcode();
+      if(sent && (lastRc == TRADE_RETCODE_DONE || lastRc == TRADE_RETCODE_PLACED)) opened++;
+      else Print("OceanRelay: lenh TP", k + 1, " that bai retcode=", lastRc, " ", g_trade.ResultRetcodeDescription());
+     }
+   Print("OceanRelay: #", id, " da mo ", opened, "/", n, " lenh");
+   if(opened == 0) return "failed:" + (string)lastRc;
+   return "opened:" + (string)opened;
   }
 
+// Khuon cap nhat (closeStatus): chua biet gia tri cu the nen CHI GHI NHAN, khong tu dong dong/doi SL.
 void OnUpdateSignal(ulong id, string side, string status, string symbol, string tf, double entry, double sl, double tp)
   {
    g_last = StringFormat("#%I64u CAP NHAT %s %s %s %s", id, side, status, symbol, tf);
@@ -171,7 +269,7 @@ void OnUpdateSignal(ulong id, string side, string status, string symbol, string 
 
 void UpdateComment(bool ok)
   {
-   Comment("OceanRelay ", EA_VER, "  [TRACKING]\n",
+   Comment("OceanRelay ", EA_VER, InpAllowTrading ? "  [DANH LENH: BAT]" : "  [CHI THEO DOI]", "\n",
            ok ? "Gateway: OK" : "Gateway: LOI (xem tab Experts)", "\n",
            "Tin hieu cuoi: ", g_last);
   }

@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module'
 import type { ServerConfig } from '../src/server/config'
-import type { D1Like, D1Stmt } from '../worker/src/index'
+import type { D1Like, D1Stmt } from '../worker/src/handler'
 
 export const EA_KEY = 'ea-key-0123456789abcdefghij'
 export const WEBHOOK_KEY = 'webhook-key-1234567890'

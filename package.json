@@ -1,6 +1,6 @@
 {
   "name": "ocean-relay",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,11 +13,17 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build.mjs",
-    "pack": "node scripts/build.mjs && node scripts/pack.mjs"
+    "pack": "node scripts/build.mjs && node scripts/pack.mjs",
+    "worker:dev": "npm --prefix worker run dev",
+    "worker:deploy": "npm --prefix worker run deploy",
+    "worker:setup": "npm --prefix worker run setup",
+    "info": "tsx src/server/main.ts info"
   },
   "devDependencies": {
+    "@types/jsdom": "^21.1.7",
     "@types/node": "^22.10.0",
     "esbuild": "^0.28.2",
+    "jsdom": "^25.0.1",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"

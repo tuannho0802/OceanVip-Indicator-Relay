@@ -30,7 +30,8 @@ export class WorkerSync {
     pulled = 0
     private stopped = true
     private timer: NodeJS.Timeout | null = null
-    private desiredUrl: string | null = null
+    /** undefined = chưa có gì để báo; null = báo "không có tunnel" để Worker bỏ địa chỉ cũ. */
+  private desiredUrl: string | null | undefined = undefined
     private reportedUrl: string | null | undefined = undefined
     private running = false
 

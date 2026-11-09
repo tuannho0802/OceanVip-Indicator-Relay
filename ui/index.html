@@ -5,85 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>OCEAN Relay</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🌊%3C/text%3E%3C/svg%3E">
-<style>
-:root{--bg:#07131c;--panel:#0d2230;--line:#17394d;--text:#e6f4f8;--muted:#7fa3b3;--accent:#19c3b1;--buy:#22c58b;--sell:#ff5d6c;--warn:#f5b84b;color-scheme:dark}
-@media (prefers-color-scheme: light){:root{--bg:#eef6f9;--panel:#fff;--line:#cfe2ea;--text:#0b2431;--muted:#5b7a89;--accent:#0a9a8b;--buy:#0f9b69;--sell:#d6384a;--warn:#b27a12;color-scheme:light}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
-header{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
-.logo{font-weight:800;letter-spacing:.06em}.logo b{color:var(--accent)}
-.sp{flex:1}.pill{padding:3px 10px;border-radius:99px;border:1px solid var(--line);color:var(--muted);font-size:12px}
-.pill.ok{color:var(--buy);border-color:var(--buy)}.pill.bad{color:var(--sell);border-color:var(--sell)}
-main{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px;padding:16px 18px;max-width:1300px;margin:0 auto}
-@media(max-width:860px){main{grid-template-columns:1fr}}
-h2{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:0 0 10px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
-.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.badge{padding:2px 9px;border-radius:7px;font-weight:700;font-size:12px;color:#04141c}
-.badge.buy{background:var(--buy)}.badge.sell{background:var(--sell)}.badge.upd{background:var(--warn)}.badge.unk{background:var(--muted)}
-.sym{font-weight:700;font-size:16px}.tf{color:var(--muted)}.time{margin-left:auto;color:var(--muted);font-size:12px}
-.lv{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-top:10px}
-.lv div{background:rgba(127,163,179,.08);border-radius:9px;padding:6px 8px}
-.lv small{display:block;color:var(--muted);font-size:11px}.lv span{font-variant-numeric:tabular-nums;font-weight:600}
-.lv .sl span{color:var(--sell)}.lv .tp span{color:var(--buy)}
-@media(max-width:520px){.lv{grid-template-columns:repeat(3,minmax(0,1fr))}}
-.del{margin-top:8px;color:var(--muted);font-size:12px}
-.exp{opacity:.55}.raw{margin-top:6px;font:12px ui-monospace,Consolas,monospace;color:var(--muted);word-break:break-all}
-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;display:block;overflow-x:auto}
-th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--muted);font-weight:500}
-.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);display:inline-block}.dot.on{background:var(--buy);box-shadow:0 0 8px var(--buy)}
-.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:8px}.metrics small{color:var(--muted);display:block}
-.pos-buy{color:var(--buy)}.pos-sell{color:var(--sell)}
-.empty{color:var(--muted);padding:18px;text-align:center}
-#login{max-width:360px;margin:12vh auto;text-align:center}
-input,button{font:inherit;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--text);padding:9px 12px}
-button{background:var(--accent);color:#04141c;border:0;font-weight:700;cursor:pointer}
-</style>
+<link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<header><div class="logo">OCEAN<b> RELAY</b></div><span class="pill" id="conn">đang kết nối…</span><div class="sp"></div><span class="pill" id="age"></span><button id="out" style="display:none;background:transparent;color:var(--muted);border:1px solid var(--line)">Thoát</button></header>
-<div id="login" class="card" style="display:none"><h2>Đăng nhập</h2><p>Nhập token quản trị (OCEAN_ADMIN_TOKEN)</p><input id="tok" type="password" autocomplete="current-password"> <button id="go">Vào</button><p id="err" class="pos-sell"></p></div>
-<main id="app" style="display:none"><section><h2>Tín hiệu</h2><div id="signals"></div></section><aside><h2>Terminal MT5</h2><div id="terms"></div></aside></main>
-<script>
-const $=id=>document.getElementById(id);
-let token=''; try{token=localStorage.getItem('ocean_token')||''}catch{}
-const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e};
-const fmt=n=>n===null||n===undefined?'–':Number(n).toLocaleString('en-US',{maximumFractionDigits:5});
-const ago=s=>s<60?s+'s':s<3600?Math.floor(s/60)+'m':s<86400?Math.floor(s/3600)+'h':Math.floor(s/86400)+'d';
-function lv(label,val,cls){const d=el('div',cls);d.append(el('small','',label),el('span','',fmt(val)));return d}
-function signalCard(s,now){
-  const c=el('div','card'+(s.expired?' exp':''));const r=el('div','row');
-  if(s.kind==='entry')r.append(el('span','badge '+s.side,s.side.toUpperCase()+' ENTRY'));
-  else if(s.kind==='update')r.append(el('span','badge upd',(s.side||'').toUpperCase()+' · '+s.status));
-  else r.append(el('span','badge unk','KHÔNG ĐỌC ĐƯỢC'));
-  if(s.symbol)r.append(el('span','sym',s.symbol),el('span','tf',s.tf||''));
-  r.append(el('span','time','#'+s.id+' · '+ago(Math.max(0,now-s.received_at))+' trước'));c.append(r);
-  if(s.kind==='entry'){const g=el('div','lv');g.append(lv('Entry',s.entry),lv('SL',s.sl,'sl'),lv('TP1 40%',s.tp1,'tp'),lv('TP2 80%',s.tp2,'tp'),lv('TP3 100%',s.tp3,'tp'));c.append(g);
-    if(s.rr)c.append(el('div','del','R:R theo TP3 ≈ 1 : '+s.rr.toFixed(2)))}
-  else if(s.kind==='update'){const g=el('div','lv');g.append(lv('Entry',s.entry),lv('SL',s.sl,'sl'),lv('TP',s.tp,'tp'));c.append(g)}
-  else{c.append(el('div','del','Lý do: '+(s.note||'')));c.append(el('div','raw',s.raw))}
-  if(s.kind!=='unknown'){const d=s.deliveries.length?'Terminal: '+s.deliveries.map(x=>x.tid+' → '+x.result).join(' · '):(s.expired?'Quá hạn, không giao cho EA':'Chưa terminal nào nhận');c.append(el('div','del',d))}
-  return c}
-function termCard(t,now){
-  const c=el('div','card');const r=el('div','row');r.append(el('span','dot'+(t.online?' on':'')),el('b','',t.login?('#'+t.login):t.tid),el('span','tf',t.server||''),el('span','time',t.online?'online':'mất '+ago(now-t.last_seen)));c.append(r);
-  const m=el('div','metrics');for(const [k,v] of [['Balance',t.balance],['Equity',t.equity],['Margin',t.margin],['Free margin',t.free_margin]]){const d=el('div');d.append(el('small','',k),el('span','',fmt(v)));m.append(d)}c.append(m);
-  const P=t.positions||[];if(P.length){const tb=el('table');const h=el('tr');for(const x of ['Ticket','Symbol','Loại','Lot','Giá mở','SL','TP','P/L'])h.append(el('th','',x));tb.append(h);
-    for(const p of P){const tr=el('tr');tr.append(el('td','',p.ticket),el('td','',p.symbol),el('td','pos-'+p.side,p.side),el('td','',fmt(p.volume)),el('td','',fmt(p.open)),el('td','',fmt(p.sl)),el('td','',fmt(p.tp)),el('td',p.profit>=0?'pos-buy':'pos-sell',fmt(p.profit)));tb.append(tr)}c.append(tb)}
-  else c.append(el('div','del','Không có lệnh đang mở'));
-  c.append(el('div','del','EA '+(t.ea_ver||'?')));return c}
-function show(login){$('login').style.display=login?'block':'none';$('app').style.display=login?'none':'grid';$('out').style.display=login?'none':'inline-block'}
-async function poll(){
-  if(!token){show(true);return}
-  try{const r=await fetch('/api/state',{headers:{authorization:'Bearer '+token},cache:'no-store'});
-    if(r.status===401){token='';try{localStorage.removeItem('ocean_token')}catch{};show(true);$('err').textContent='Token sai';return}
-    const d=await r.json();show(false);
-    $('conn').textContent='kết nối tốt';$('conn').className='pill ok';$('age').textContent='tín hiệu hết hạn sau '+d.maxAgeSec+'s';
-    const S=$('signals');S.replaceChildren(...(d.signals.length?d.signals.map(s=>signalCard(s,d.now)):[el('div','empty','Chưa có tín hiệu nào. Hãy gắn webhook vào alert TradingView.')]));
-    const T=$('terms');T.replaceChildren(...(d.terminals.length?d.terminals.map(t=>termCard(t,d.now)):[el('div','empty','Chưa có EA nào kết nối Gateway.')]));
-  }catch{$('conn').textContent='mất kết nối';$('conn').className='pill bad'}}
-$('go').onclick=()=>{token=$('tok').value.trim();try{localStorage.setItem('ocean_token',token)}catch{};$('err').textContent='';poll()};
-$('out').onclick=()=>{token='';try{localStorage.removeItem('ocean_token')}catch{};show(true)};
-setInterval(poll,2000);poll();
-</script>
+<header>
+  <div class="logo">OCEAN<b> RELAY</b></div>
+  <span class="pill" id="conn">đang kết nối…</span>
+  <div class="sp"></div>
+  <span class="pill" id="worker" hidden></span>
+  <span class="pill" id="age"></span>
+</header>
+<main id="app">
+  <section><h2>Tín hiệu</h2><div id="signals"></div></section>
+  <aside><h2>Terminal MT5</h2><div id="terms"></div></aside>
+</main>
+<script src="/app.js"></script>
 </body>
 </html>

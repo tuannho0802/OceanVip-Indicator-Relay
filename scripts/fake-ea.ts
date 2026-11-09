@@ -3,7 +3,7 @@ const gw = process.env.OCEAN_GATEWAY ?? 'http://127.0.0.1:47800'
 const acks: string[] = []
 const tick = async () => {
   const body = [
-    'login=900001', 'server=Demo-Server', 'bal=10000', 'eq=10012.5', 'mg=120', 'fm=9892.5', 'ver=0.1.0-fake',
+    'login=900001', 'server=Demo-Server', 'bal=10000', 'eq=10012.5', 'mg=120', 'fm=9892.5', 'ver=0.2.0-fake',
     'pos=555001,XAUUSD,buy,0.10,4100.00,4092.00,4116.00,12.50',
     `acks=${acks.splice(0).join(',')}`,
   ].join('\n')

@@ -22,6 +22,8 @@ export type SignalRow = {
   status: string | null
   raw: string
   note: string | null
+  wid: number | null
+  src: string
 }
 
 export type TerminalRow = {
@@ -41,36 +43,63 @@ export type TerminalRow = {
 
 export type DeliveryRow = { signal_id: number; tid: string; result: string; at: number }
 
+const MIGRATIONS: string[] = [
+  `CREATE TABLE signals (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     received_at INTEGER NOT NULL,
+     dedupe TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     side TEXT, symbol TEXT, tf TEXT,
+     entry REAL, sl REAL, tp1 REAL, tp2 REAL, tp3 REAL, tp REAL,
+     status TEXT,
+     raw TEXT NOT NULL,
+     note TEXT
+   );
+   CREATE INDEX signals_dedupe ON signals (dedupe, received_at);
+   CREATE TABLE terminals (
+     tid TEXT PRIMARY KEY,
+     first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL,
+     cursor INTEGER NOT NULL DEFAULT 0,
+     login TEXT, server TEXT, balance REAL, equity REAL, margin REAL, free_margin REAL,
+     ea_ver TEXT, positions TEXT NOT NULL DEFAULT '[]'
+   );
+   CREATE TABLE deliveries (
+     signal_id INTEGER NOT NULL, tid TEXT NOT NULL, result TEXT NOT NULL, at INTEGER NOT NULL,
+     PRIMARY KEY (signal_id, tid)
+   );`,
+  // 2: tín hiệu từ Worker mang mã wid (chống nhận hai lần khi push và kéo bù cùng chuyển) + bảng meta
+  `ALTER TABLE signals ADD COLUMN wid INTEGER;
+   ALTER TABLE signals ADD COLUMN src TEXT NOT NULL DEFAULT 'hook';
+   CREATE UNIQUE INDEX signals_wid ON signals (wid) WHERE wid IS NOT NULL;
+   CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);`,
+]
+
 export class Store {
   readonly db: DatabaseSyncType
   constructor(file: string) {
     this.db = new DatabaseSync(file)
-    this.db.exec(`
-      PRAGMA journal_mode = WAL;
-      CREATE TABLE IF NOT EXISTS signals (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        received_at INTEGER NOT NULL,
-        dedupe TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        side TEXT, symbol TEXT, tf TEXT,
-        entry REAL, sl REAL, tp1 REAL, tp2 REAL, tp3 REAL, tp REAL,
-        status TEXT,
-        raw TEXT NOT NULL,
-        note TEXT
-      );
-      CREATE INDEX IF NOT EXISTS signals_dedupe ON signals (dedupe, received_at);
-      CREATE TABLE IF NOT EXISTS terminals (
-        tid TEXT PRIMARY KEY,
-        first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL,
-        cursor INTEGER NOT NULL DEFAULT 0,
-        login TEXT, server TEXT, balance REAL, equity REAL, margin REAL, free_margin REAL,
-        ea_ver TEXT, positions TEXT NOT NULL DEFAULT '[]'
-      );
-      CREATE TABLE IF NOT EXISTS deliveries (
-        signal_id INTEGER NOT NULL, tid TEXT NOT NULL, result TEXT NOT NULL, at INTEGER NOT NULL,
-        PRIMARY KEY (signal_id, tid)
-      );
-    `)
+    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;')
+    const row = this.db.prepare('PRAGMA user_version').get() as { user_version: number }
+    for (let v = row.user_version; v < MIGRATIONS.length; v++) {
+      this.db.exec('BEGIN')
+      try {
+        this.db.exec(MIGRATIONS[v] as string)
+        this.db.exec(`PRAGMA user_version = ${v + 1}`)
+        this.db.exec('COMMIT')
+      } catch (e) {
+        this.db.exec('ROLLBACK')
+        throw e
+      }
+    }
+  }
+
+  getMeta(k: string): string | null {
+    const r = this.db.prepare('SELECT v FROM meta WHERE k = ?').get(k) as { v: string } | undefined
+    return r?.v ?? null
+  }
+
+  setMeta(k: string, v: string): void {
+    this.db.prepare('INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').run(k, v)
   }
 
   maxSignalId(): number {
@@ -79,7 +108,18 @@ export class Store {
   }
 
   /** Trả về id mới, hoặc null nếu trùng một tín hiệu cùng khóa trong cửa sổ `dedupeSec`. */
-  insertSignal(p: Parsed, raw: string, dedupe: string | null, now: number, dedupeSec: number): { id: number } | { duplicateOf: number } {
+  insertSignal(
+    p: Parsed,
+    raw: string,
+    dedupe: string | null,
+    now: number,
+    dedupeSec: number,
+    ext?: { wid: number; receivedAt: number },
+  ): { id: number } | { duplicateOf: number } {
+    if (ext) {
+      const same = this.db.prepare('SELECT id FROM signals WHERE wid = ?').get(ext.wid) as { id: number } | undefined
+      if (same) return { duplicateOf: same.id }
+    }
     if (dedupe) {
       const dup = this.db
         .prepare('SELECT id FROM signals WHERE dedupe = ? AND received_at >= ? ORDER BY id DESC LIMIT 1')
@@ -90,11 +130,11 @@ export class Store {
     const u = p.kind === 'update' ? p : null
     const r = this.db
       .prepare(
-        `INSERT INTO signals (received_at, dedupe, kind, side, symbol, tf, entry, sl, tp1, tp2, tp3, tp, status, raw, note)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO signals (received_at, dedupe, kind, side, symbol, tf, entry, sl, tp1, tp2, tp3, tp, status, raw, note, wid, src)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
-        now,
+        ext ? ext.receivedAt : now,
         dedupe ?? '',
         p.kind,
         q?.side ?? u?.side ?? null,
@@ -109,6 +149,8 @@ export class Store {
         u?.status ?? null,
         raw.slice(0, 2000),
         p.kind === 'unknown' ? p.reason : null,
+        ext?.wid ?? null,
+        ext ? 'worker' : 'hook',
       )
     return { id: Number(r.lastInsertRowid) }
   }

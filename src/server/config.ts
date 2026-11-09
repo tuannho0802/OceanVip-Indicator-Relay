@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { LogLevel } from './log'
 
-export const APP_VERSION = '0.2.0'
+export const APP_VERSION = process.env.OCEAN_VERSION ?? "0.2.0"
 
 export type ServerConfig = {
   port: number

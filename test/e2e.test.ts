@@ -2,6 +2,7 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Gateway, parseKv } from '../src/gateway/gateway'
 import { type App, createApp } from '../src/server/app'
+import { EA_KEY, WEBHOOK_KEY, baseCfg } from './helpers'
 
 const SELL =
   'OCEAN VIP by Duong | SELL ENTRY | XAUUSD | M3 | Entry: 4118.000 | SL: 4125.970 | TP1 40%: 4111.624 | TP2 80%: 4105.248 | TP3 100%: 4102.060'
@@ -11,24 +12,19 @@ const BUY_M15 =
 let app: App
 let base = ''
 let now = 1_000_000
-const KEY = 'webhook-key-1234567890'
-const TOK = 'gateway-token-1234567890'
-const ADM = 'admin-token-123456'
+const KEY = WEBHOOK_KEY
 
 const post = (path: string, body: string) => fetch(base + path, { method: 'POST', body })
 const hook = (body: string) => post(`/webhook?key=${KEY}`, body)
 
 const mkGateway = (over: Partial<ConstructorParameters<typeof Gateway>[0]> = {}) =>
-  new Gateway({ port: 0, serverUrl: base, token: TOK, tfs: [], symbolMap: {}, timeoutMs: 1500, ...over }, fetch, () => now)
+  new Gateway({ port: 0, serverUrl: base, key: EA_KEY, tfs: [], symbolMap: {}, timeoutMs: 1500, ...over }, fetch, () => now)
 
 const ea = (acks = '') => `login=900001\nserver=Demo\nbal=1000\neq=1005\nver=0.1.0\nacks=${acks}`
 
 beforeEach(async () => {
   now = 1_000_000
-  app = createApp(
-    { port: 0, host: '127.0.0.1', dbFile: ':memory:', webhookKey: KEY, gatewayToken: TOK, adminToken: ADM, maxAgeSec: 120, dedupeSec: 300, uiDir: 'ui' },
-    () => now,
-  )
+  app = createApp(baseCfg(), { clock: () => now })
   await new Promise<void>((r) => app.server.listen(0, '127.0.0.1', r))
   base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`
 })
@@ -90,13 +86,13 @@ describe('gateway + EA', () => {
     const out = await gw.handlePing(ea())
     expect(out.text.split('\n')).toEqual(['OK', 'S|2|buy|GOLD|M15|4100|4092|4106.4|4112.8|4116|0'])
     await gw.handlePing(ea('2:received'))
-    const st = (await (await fetch(`${base}/api/state`, { headers: { authorization: `Bearer ${ADM}` } })).json()) as {
+    const st = (await (await fetch(`${base}/api/state`)).json()) as {
       signals: { id: number; deliveries: { result: string }[] }[]
       terminals: { online: boolean; login: string }[]
     }
     expect(st.signals.find((s) => s.id === 1)?.deliveries[0]?.result).toBe('skipped_tf')
     expect(st.signals.find((s) => s.id === 2)?.deliveries[0]?.result).toBe('received')
-    expect(st.terminals[0]).toMatchObject({ online: true, login: '900001' })
+    expect(st.terminals[0]).toMatchObject({ online: true, login: '•••001' })
   })
   it('server không với tới: Gateway trả ERR và giữ ack để gửi lại', async () => {
     const gw = mkGateway()
@@ -107,7 +103,7 @@ describe('gateway + EA', () => {
     // ack giữ trong bộ nhớ của Gateway "chết"; đổi sang server sống thì được gửi đi
     ;(dead.cfg as { serverUrl: string }).serverUrl = base
     await dead.handlePing(ea())
-    const st = (await (await fetch(`${base}/api/state`, { headers: { authorization: `Bearer ${ADM}` } })).json()) as {
+    const st = (await (await fetch(`${base}/api/state`)).json()) as {
       signals: { id: number; deliveries: { result: string }[] }[]
     }
     expect(st.signals[0]?.deliveries[0]?.result).toBe('received')
@@ -115,11 +111,20 @@ describe('gateway + EA', () => {
 })
 
 describe('bảo mật', () => {
-  it('ping cần token Gateway, state cần token admin', async () => {
+  it('ping cần khóa EA; giao diện và state công khai (không đăng nhập)', async () => {
     const r = await fetch(`${base}/api/gw/ping`, { method: 'POST', body: '{}' })
     expect(r.status).toBe(401)
-    expect((await fetch(`${base}/api/state`)).status).toBe(401)
+    expect((await fetch(`${base}/api/state`)).status).toBe(200)
     expect((await fetch(`${base}/api/health`)).status).toBe(200)
+    expect((await fetch(`${base}/`)).status).toBe(200)
+  })
+  it('giao diện công khai che số tài khoản MT5 (chỉ lộ 3 số cuối)', async () => {
+    const gw = mkGateway()
+    await gw.handlePing(ea())
+    const st = (await (await fetch(`${base}/api/state`)).json()) as { terminals: { login: string; tid: string }[] }
+    expect(st.terminals[0]?.login).toBe('•••001')
+    expect(st.terminals[0]?.tid).toBe('•••001@Demo')
+    expect(JSON.stringify(st)).not.toContain('900001')
   })
   it('body quá lớn bị từ chối', async () => {
     expect((await hook('x'.repeat(20_000))).status).toBe(413)

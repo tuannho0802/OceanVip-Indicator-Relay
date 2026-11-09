@@ -73,6 +73,8 @@ app.server.listen(cfg.port, cfg.host, () => {
   }
   if (cfg.quickTunnel && !cfg.publicUrl) {
     const bin = cfg.cloudflared || path.join(cfg.dataDir, process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared')
+    // Địa chỉ Quick Tunnel của lần chạy trước đã chết: báo "chưa có" tới khi tunnel mới lên.
+    sync?.setPublicUrl(null)
     tunnel = new QuickTunnel({
       port: cfg.port,
       binPath: bin,

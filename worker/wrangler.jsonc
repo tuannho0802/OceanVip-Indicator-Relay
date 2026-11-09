@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ocean-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  // WEBHOOK_KEY và SYNC_KEY là secret (đặt bằng `npm run setup` hoặc `wrangler secret put`), không ghi vào file này.
+  // VPS_ORIGIN chỉ cần khi VPS dùng Cloudflare Tunnel có tên + domain; Quick Tunnel thì VPS tự báo địa chỉ lên.
+  "vars": { "VPS_ORIGIN": "" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ocean-relay",
+      // `npm run setup` tạo D1 và thay ID này. Dev local dùng ID giả.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
