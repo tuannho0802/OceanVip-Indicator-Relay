@@ -12,6 +12,9 @@ Không có đăng nhập; giao diện công khai, chỉ đọc. Bảo mật nằ
 | [CONFIG.md](CONFIG.md) | Bảng biến môi trường đầy đủ (Server, Gateway, Worker) |
 | [PROTOCOL.md](PROTOCOL.md) | Giao thức từng chặng và định dạng dòng S/U cho EA |
 | [OPERATIONS.md](OPERATIONS.md) | Vận hành, log, sự cố thường gặp |
+| [ALERT-FORMAT.md](ALERT-FORMAT.md) | Định dạng alert text một dòng của indicator (mẫu thật) |
+| [CICD.md](CICD.md) | GitHub Actions: `[deploy]` cho Worker, `[release-server]` cho bộ cài |
+| [VPS-TEST.md](VPS-TEST.md) | Kiểm thử thủ công bộ cài, Quick Tunnel, giao diện trên VPS |
 
 ## Tài liệu theo thư mục
 | Thư mục | Tài liệu |

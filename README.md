@@ -24,10 +24,13 @@ Cài thật (Worker + VPS Windows + MT5 + TradingView): [docs/DEPLOY.md](docs/DE
 ## An toàn khi giao dịch
 EA mặc định **chỉ theo dõi** (`InpAllowTrading=false`) và chưa từng được biên dịch trên MT5 thật. Thử trên DEMO trước. Chi tiết: [docs/ea/README.md](docs/ea/README.md).
 
+## Alert, CI/CD
+Alert của indicator là **một dòng text** (không JSON): [docs/ALERT-FORMAT.md](docs/ALERT-FORMAT.md). Commit có `[deploy]` deploy Worker, `[release-server]` build bộ cài Server: [docs/CICD.md](docs/CICD.md).
+
 ## Tài liệu
 Mục lục: [docs/README.md](docs/README.md) — kiến trúc, bảo mật, cấu hình, giao thức, vận hành, và tài liệu riêng cho `server`, `shared`, `gateway`, `worker`, `ea`, `ui`, `scripts`, `test`.
 
 ## Giới hạn đã biết
-- EA, script PowerShell chưa chạy thử trên máy thật; chưa có bộ cài `.exe`.
+- EA, script PowerShell và bộ cài `.exe` chưa chạy thử trên máy thật (kiểm thử: [docs/VPS-TEST.md](docs/VPS-TEST.md)).
 - Khuôn cập nhật (`closeStatus`) mới chỉ lưu và hiển thị; EA chưa tự đóng/dời SL.
 - `node:sqlite` còn ở mức thử nghiệm của Node (có cảnh báo khi chạy).

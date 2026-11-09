@@ -10,4 +10,4 @@
 | `tunnel.test.ts` | Quick Tunnel/cloudflared |
 | `helpers.ts` | `baseCfg`, khóa mẫu, `fakeD1` |
 
-Chạy: `npm test`, kiểm kiểu: `npm run typecheck`. Bản patch này được tạo **không chạy test** theo yêu cầu; hãy chạy trước khi dùng thật.
+Chạy: `npm test`, kiểm kiểu: `npm run typecheck`. CI chạy `typecheck` + `npm test` trước mỗi `[deploy]` và `[release-server]`. `parse.test.ts` có nhóm `alert mẫu thật của indicator`.

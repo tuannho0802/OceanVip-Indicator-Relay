@@ -9,11 +9,13 @@ cd worker && npm install
 npx wrangler login
 npm run setup      # tạo D1, nạp schema, sinh WEBHOOK_KEY + SYNC_KEY, đặt secret, deploy
 ```
-Lệnh in ra: **Webhook URL** (dán vào TradingView), **Worker URL** và **SYNC_KEY** (dùng ở bước 2). Lưu lại, không commit.
+Về sau cập nhật Worker bằng commit có `[deploy]` (secret GitHub trong [CICD.md](CICD.md)). Lệnh in ra: **Webhook URL** (dán vào TradingView), **Worker URL** và **SYNC_KEY** (dùng ở bước 2). Lưu lại, không commit.
 Dùng lại khóa cũ: `node setup.mjs --webhook-key … --sync-key …`.
 
 ## 2. Server trên VPS Windows
-Trên máy Windows: `npm install && npm run pack`, nén `release/ocean-relay`, chép lên VPS. PowerShell **Administrator**:
+**Cách nhanh:** commit có `[release-server]` để GitHub Actions build `OceanRelay-Server-Setup.exe` (xem [CICD.md](CICD.md)), tải ở trang Release, chạy trên VPS và điền Worker URL + SYNC_KEY. Quy trình kiểm thử: [VPS-TEST.md](VPS-TEST.md).
+
+**Cách tay:** trên máy Windows `npm install && npm run pack`, nén `release/ocean-relay`, chép lên VPS. PowerShell **Administrator**:
 ```powershell
 .\scripts\install-server.ps1 -WorkerUrl https://ocean-relay.<tên>.workers.dev -SyncKey <SYNC_KEY>
 ```

@@ -17,6 +17,8 @@ Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object { $_.Co
 New-Item -ItemType Directory -Force $InstallDir, "$env:ProgramData\OceanRelay\logs" | Out-Null
 Copy-Item "$src\dist", "$src\web" $InstallDir -Recurse -Force
 Copy-Item "$src\scripts\init-env.ps1" $InstallDir -Force
+# Kèm scripts/ea/docs vào thư mục cài: gỡ tác vụ, cài Gateway, kiểm tra VPS và lấy EA đều chạy từ đây (cả khi gỡ bằng bộ cài).
+foreach ($d in 'scripts', 'ea', 'docs') { if (Test-Path "$src\$d") { Copy-Item "$src\$d" $InstallDir -Recurse -Force } }
 Copy-Item $node "$InstallDir\node.exe" -Force
 # Dữ liệu và log: chỉ SYSTEM + Administrators.
 icacls "$env:ProgramData\OceanRelay" /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null

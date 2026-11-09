@@ -1,0 +1,141 @@
+name: Release Server
+
+# Build bộ cài OCEAN Relay Server (Server + Gateway + giao diện + EA + node.exe) khi COMMIT MỚI NHẤT của lần push lên main
+# có chứa [release-server] trong message:
+#   git commit -m "feat(server): xxx [release-server]"
+# Không có dấu hiệu này thì workflow bị bỏ qua, không tốn phút build Windows.
+#
+# Phiên bản lấy từ package.json ở thư mục gốc, nên PHẢI tăng "version" trước khi release. Tag Git và GitHub Release có tên
+# server-v<version>. Release đó đã tồn tại thì workflow dừng ngay, không ghi đè bộ cài đã phát hành.
+# Chạy tay (workflow_dispatch) chỉ build và đưa file vào Artifacts, không tạo Release.
+# Đầu ra: OceanRelay-Server-Setup.exe (Inno Setup), OceanRelay-Server-<version>.zip (bản portable), SHA256SUMS.txt.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-server
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-server]')
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck và test
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Xác định phiên bản
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "Version khong hop le trong package.json: '$v'" }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Phien ban: $v"
+
+      - name: Dừng sớm nếu phiên bản này đã được phát hành
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'server-v${{ steps.ver.outputs.version }}'
+          gh release view $tag *> $null
+          $exists = ($LASTEXITCODE -eq 0)
+          $global:LASTEXITCODE = 0
+          if ($exists) {
+            throw "Release $tag da ton tai. Tang version trong package.json roi commit lai voi [release-server]."
+          }
+
+      # build.mjs gom dist/server.mjs + dist/gateway.mjs; pack.mjs tạo release/ocean-relay (kèm node.exe vì đang chạy trên Windows).
+      - name: Build và đóng gói
+        run: npm run pack
+
+      - name: Kiểm tra gói có node.exe
+        shell: pwsh
+        run: |
+          foreach ($f in 'node.exe', 'dist\server.mjs', 'dist\gateway.mjs', 'web\index.html', 'scripts\install-server.ps1', 'ea\OceanRelay.mq5') {
+            if (-not (Test-Path "release\ocean-relay\$f")) { throw "Goi thieu $f" }
+          }
+
+      # Chạy gói thật, gửi đúng một dòng text mẫu của indicator qua webhook, rồi kiểm tra Server nhận và đọc ra tín hiệu vào lệnh.
+      - name: Chạy thử gói (smoke test)
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'ocean'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $env:OCEAN_DATA = $dir
+          $env:OCEAN_PORT = '18090'
+          $env:OCEAN_ENV_FILE = Join-Path $dir 'none.env'
+          $env:OCEAN_EA_KEY = 'ci-smoke-ea-key-0123456789abcdef'
+          $env:OCEAN_WEBHOOK_KEY = 'ci-smoke-webhook-key-0123'
+          $p = Start-Process -FilePath release\ocean-relay\node.exe `
+            -ArgumentList '--disable-warning=ExperimentalWarning', 'release\ocean-relay\dist\server.mjs' `
+            -PassThru -WindowStyle Hidden
+          try {
+            $ok = $false
+            for ($i = 0; $i -lt 30 -and -not $ok; $i++) {
+              Start-Sleep -Milliseconds 500
+              try { $ok = ((Invoke-RestMethod http://127.0.0.1:18090/api/health).status -eq 'ok') } catch {}
+            }
+            if (-not $ok) { throw 'Server khong tra loi /api/health' }
+            $html = (Invoke-WebRequest http://127.0.0.1:18090/ -UseBasicParsing).Content
+            if ($html -notmatch '<html') { throw 'Server khong phuc vu giao dien web (thieu web/index.html)' }
+            $alert = 'OCEAN VIP by Duong | BUY ENTRY | XAUUSD | M3 | Entry: 4094.540 | SL: 4088.700 | TP1 40%: 4099.212 | TP2 80%: 4103.884 | TP3 100%: 4106.220'
+            $r = Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:18090/webhook?key=ci-smoke-webhook-key-0123' -ContentType 'text/plain' -Body $alert
+            if ($r.kind -ne 'entry') { throw "Webhook khong doc ra tin hieu vao lenh: $($r | ConvertTo-Json -Compress)" }
+            Write-Host 'OK: Server, giao dien va khuon alert text mot dong'
+          } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+
+      - name: Build bộ cài (Inno Setup) và bản portable
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=${{ steps.ver.outputs.version }}" Installer\ocean-relay.iss
+          if ($LASTEXITCODE -ne 0) { throw 'ISCC loi' }
+          $zip = 'release\OceanRelay-Server-${{ steps.ver.outputs.version }}.zip'
+          Compress-Archive -Path release\ocean-relay\* -DestinationPath $zip -Force
+          Push-Location release
+          Get-ChildItem OceanRelay-Server-Setup.exe, OceanRelay-Server-*.zip | ForEach-Object {
+            $h = (Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)"
+          } | Out-File SHA256SUMS.txt -Encoding ascii
+          Pop-Location
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OceanRelay-Server-${{ steps.ver.outputs.version }}
+          path: |
+            release/OceanRelay-Server-Setup.exe
+            release/OceanRelay-Server-${{ steps.ver.outputs.version }}.zip
+            release/SHA256SUMS.txt
+
+      - name: Tạo GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: server-v${{ steps.ver.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: OCEAN Relay Server v${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          files: |
+            release/OceanRelay-Server-Setup.exe
+            release/OceanRelay-Server-${{ steps.ver.outputs.version }}.zip
+            release/SHA256SUMS.txt

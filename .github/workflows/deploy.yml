@@ -1,0 +1,97 @@
+name: Deploy Worker
+
+# Chỉ deploy Worker khi COMMIT MỚI NHẤT của lần push lên main có chứa [deploy] trong message:
+#   git commit -m "fix(worker): xxx [deploy]"
+# Không có [deploy] thì workflow bị bỏ qua. Chạy tay (workflow_dispatch) luôn deploy.
+#
+# Thứ tự: kiểm tra (typecheck + test) -> migration D1 remote -> deploy Worker. Kiểm tra hỏng thì dừng.
+#
+# Cần trong Settings > Secrets and variables > Actions:
+#   CLOUDFLARE_API_TOKEN   token có quyền Workers Scripts:Edit và D1:Edit
+#   CLOUDFLARE_ACCOUNT_ID  ID tài khoản Cloudflare
+#   D1_DATABASE_ID         database_id thật của D1 "ocean-relay" (chỉ cần khi worker/wrangler.jsonc trong repo còn ID giả)
+# WEBHOOK_KEY và SYNC_KEY là secret của Worker, đặt MỘT LẦN bằng `cd worker && npm run setup`; deploy không đụng tới chúng.
+# Bộ cài Server có workflow riêng (release-server.yml, tag [release-server]).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[deploy]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+    steps:
+      - name: Kiểm tra đủ secret
+        run: |
+          missing=0
+          for v in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            if [ -z "${!v}" ]; then echo "::error::Thieu secret $v (Settings > Secrets and variables > Actions)"; missing=1; fi
+          done
+          if [ -n "$D1_DATABASE_ID" ] && ! [[ "$D1_DATABASE_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+            echo "::error::D1_DATABASE_ID khong phai UUID"; missing=1
+          fi
+          exit $missing
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package.json
+
+      - run: npm ci
+
+      - name: Typecheck và test
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Cài wrangler
+        run: npm install --prefix worker --no-audit --no-fund
+
+      # worker/wrangler.jsonc có thể còn database_id giả (ID thật không bắt buộc phải commit). Thay trên bản checkout của runner;
+      # vẫn còn ID giả mà không có secret D1_DATABASE_ID thì dừng, không deploy nhầm.
+      - name: Điền database_id thật vào wrangler.jsonc
+        working-directory: worker
+        run: |
+          fake='00000000-0000-0000-0000-000000000000'
+          if grep -q "$fake" wrangler.jsonc; then
+            [ -n "$D1_DATABASE_ID" ] || { echo "::error::wrangler.jsonc con database_id gia va chua co secret D1_DATABASE_ID"; exit 1; }
+            sed -i "s/$fake/$D1_DATABASE_ID/" wrangler.jsonc
+            if grep -q "$fake" wrangler.jsonc; then echo "::error::Van con database_id gia"; exit 1; fi
+          fi
+
+      # Migration chỉ có CREATE ... IF NOT EXISTS nên chạy lại trên D1 do setup.mjs tạo (nạp schema.sql) là an toàn.
+      - name: Migration D1 (remote)
+        working-directory: worker
+        run: npx wrangler d1 migrations apply ocean-relay --remote
+
+      # API Cloudflare thỉnh thoảng trả lỗi tạm thời: thử tối đa 3 lần, nghỉ 20 và 40 giây. Lỗi thật (sai token, lỗi mã) vẫn hỏng cả 3 lần.
+      - name: Deploy Worker
+        working-directory: worker
+        run: |
+          for attempt in 1 2 3; do
+            npx wrangler deploy && exit 0
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::Deploy lan $attempt that bai, thu lai sau $((attempt * 20)) giay"
+              sleep $((attempt * 20))
+            fi
+          done
+          echo "::error::Deploy that bai ca 3 lan (xem log Wrangler o tren; kiem tra https://www.cloudflarestatus.com va quyen cua CLOUDFLARE_API_TOKEN)"
+          exit 1

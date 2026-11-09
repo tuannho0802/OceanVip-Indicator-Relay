@@ -41,3 +41,32 @@ describe('parseAlert', () => {
     expect(dedupeKey(a)).toBe(dedupeKey(b))
   })
 })
+
+// Mẫu THẬT bắt được từ webhook của indicator (một dòng text, không phải JSON). Ghi lại ở docs/ALERT-FORMAT.md.
+const REAL =
+  'OCEAN VIP by Duong | BUY ENTRY | XAUUSD | M3 | Entry: 4094.540 | SL: 4088.700 | TP1 40%: 4099.212 | TP2 80%: 4103.884 | TP3 100%: 4106.220'
+
+describe('alert mẫu thật của indicator', () => {
+  it('đọc đủ các trường', () => {
+    const p = parseAlert(REAL)
+    expect(p).toEqual({
+      kind: 'entry',
+      indicator: 'OCEAN VIP by Duong',
+      side: 'buy',
+      symbol: 'XAUUSD',
+      tf: 'M3',
+      entry: 4094.54,
+      sl: 4088.7,
+      tp1: 4099.212,
+      tp2: 4103.884,
+      tp3: 4106.22,
+    })
+  })
+  it('chịu được body có dấu nháy hoặc xuống dòng cuối do TradingView/proxy thêm', () => {
+    expect(parseAlert(`${REAL}\n`).kind).toBe('entry')
+    expect(parseAlert(`  ${REAL}\r\n`).kind).toBe('entry')
+  })
+  it('không phải JSON: body JSON bị xếp vào unknown, không đoán', () => {
+    expect(parseAlert(JSON.stringify({ message: REAL })).kind).toBe('unknown')
+  })
+})

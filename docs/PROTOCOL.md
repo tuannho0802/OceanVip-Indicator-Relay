@@ -1,6 +1,10 @@
 # Giao thức
 
 ## Alert TradingView (body text, ngăn bằng `|`)
+Body là **một dòng text thuần, không phải JSON**. Mẫu thật và quy tắc đọc: [ALERT-FORMAT.md](ALERT-FORMAT.md).
+```
+OCEAN VIP by Duong | BUY ENTRY | XAUUSD | M3 | Entry: 4094.540 | SL: 4088.700 | TP1 40%: 4099.212 | TP2 80%: 4103.884 | TP3 100%: 4106.220
+```
 - Vào lệnh: `NAME | BUY|SELL ENTRY | SYMBOL | TF | Entry: x | SL: x | TP1 40%: x | TP2 80%: x | TP3 100%: x`
 - Cập nhật: `NAME | <BUY|SELL> | <closeStatus> | SYMBOL | TF | Entry: x | SL: x | TP: x`
 - Khuôn lạ: lưu `kind=unknown` kèm lý do, không giao cho EA. SL/TP sai phía so với Entry bị từ chối (cũng thành `unknown`).

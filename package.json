@@ -17,7 +17,8 @@
     "worker:dev": "npm --prefix worker run dev",
     "worker:deploy": "npm --prefix worker run deploy",
     "worker:setup": "npm --prefix worker run setup",
-    "info": "tsx src/server/main.ts info"
+    "info": "tsx src/server/main.ts info",
+    "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
     "@types/jsdom": "^21.1.7",

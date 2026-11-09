@@ -14,11 +14,16 @@ let base = ''
 let now = 4_000_000
 beforeEach(async () => {
     now = 4_000_000
-    app = createApp(baseCfg(), { clock: () => now, workerStatus: () => ({ lastPollOk: now - 5, lastError: '', pulled: 0 }) })
+    app = createApp(baseCfg({ workerUrl: 'https://ocean-relay.example.workers.dev', syncKey: 'k'.repeat(40) }), { clock: () => now, workerStatus: () => ({ lastPollOk: now - 5, lastError: '', pulled: 0 }) })
     await new Promise<void>((r) => app.server.listen(0, '127.0.0.1', r))
     base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`
 })
-afterEach(() => app.close())
+const windows: { close: () => void }[] = []
+afterEach(() => {
+    // Đóng cửa sổ jsdom SAU khi đã kiểm tra: close() xóa sạch DOM nên không được gọi trong render().
+    for (const w of windows.splice(0)) w.close()
+    app.close()
+})
 
 async function render(): Promise<Document> {
     const dom = new JSDOM(readFileSync('ui/index.html', 'utf8').replace(/<script[^>]*><\/script>/, ''), { runScripts: 'outside-only', url: `${base}/` })
@@ -26,9 +31,8 @@ async function render(): Promise<Document> {
     w.fetch = ((u: string, o?: RequestInit) => fetch(`${base}${u}`, o)) as typeof fetch
     w.eval(readFileSync('ui/app.js', 'utf8'))
     await new Promise((r) => setTimeout(r, 400))
-    const doc = dom.window.document
-    w.close()
-    return doc
+    windows.push(w)
+    return dom.window.document
 }
 
 describe('giao diện công khai (không đăng nhập)', () => {
