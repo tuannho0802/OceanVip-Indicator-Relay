@@ -1,20 +1,23 @@
-import { SERVER_ID_RE, deriveServerKey } from '../../src/shared/connect'
-import { sameSecret, signBody } from '../../src/shared/hmac'
+import { SERVER_ID_RE } from '../../src/shared/connect'
+import { sameSecret } from '../../src/shared/hmac'
+import { appRoute, ensureAdmin } from './app'
+import { broadcastTargets, hookTargets, lockedAmong, normalizeOrigin, serverKey, storeAndDeliver } from './deliver'
+import { json } from './http'
+import { appPage, helpPage } from './ui'
 
 /**
  * Cloudflare Worker của OCEAN Relay: "hộp thư" công khai đứng trước VPS.
  *
- * Nhiều Server: mỗi người dùng một Server ID + khóa riêng (suy ra từ SYNC_KEY gốc, xem src/shared/connect.ts).
- * Alert mặc định chia cho MỌI Server đã đăng ký; thêm `&to=id1,id2` vào webhook để chỉ giao cho Server nêu tên.
- * Server nào chỉ thấy và chỉ kéo được tín hiệu của chính nó. Việc chọn tài khoản MT5 nào đánh nằm ở Server (OCEAN_ACCOUNTS).
+ * Nhiều Server: mỗi VPS một Server ID + khóa riêng (suy ra từ SYNC_KEY gốc, xem src/shared/connect.ts).
+ * Phân quyền (app.ts): Admin tạo tài khoản User, cấp hạn mức, khóa/mở khóa. Mỗi User tự tạo VPS + Webhook URL của mình (trong hạn mức);
+ * Webhook của User CHỈ giao cho VPS của chính User đó. Khóa chung WEBHOOK_KEY (đời cũ) chỉ giao cho VPS của Admin/VPS đời cũ,
+ * thêm `&to=id1,id2` để chỉ giao cho Server nêu tên.
  *
  *  TradingView ──POST /webhook?key=…──► Worker (lưu D1, trả 200 ngay) ──push ký HMAC (khóa riêng)──► VPS /api/ingest
  *                                                    ▲
  *                              VPS kéo bù GET /api/pull + POST /api/ack khi push hụt (VPS/tunnel sập đúng lúc alert bắn)
  *
- * EA KHÔNG BAO GIỜ gọi Worker: EA chỉ nói chuyện với Gateway/Server trên VPS, nên request Worker chỉ tốn khi có alert,
- * khi VPS kéo bù (mặc định 30 giây/lần) và khi có người mở trang công khai.
- * Worker không phân tích alert (việc của Server) nên đổi khuôn thông báo không phải deploy lại Worker.
+ * EA KHÔNG BAO GIỜ gọi Worker. Worker không phân tích alert (việc của Server) nên đổi khuôn thông báo không phải deploy lại Worker.
  */
 
 /** Phần tối thiểu của D1 mà Worker dùng (khai báo tại chỗ để khỏi cần gói kiểu của Cloudflare; test dùng bản giả trên node:sqlite). */
@@ -35,23 +38,18 @@ export type Env = {
   SYNC_KEY?: string
   /** Địa chỉ VPS đặt tay cho Server đời cũ (không có Server ID). Server mới tự báo địa chỉ. */
   VPS_ORIGIN?: string
+  /** Mật khẩu ban đầu của Admin (secret). Chỉ dùng khi CHƯA có tài khoản nào: tạo Admin rồi bắt đổi mật khẩu ngay. */
+  ADMIN_PASSWORD?: string
+  /** Tên Admin ban đầu (mặc định `admin`). */
+  ADMIN_USER?: string
+  /** Địa chỉ https công khai của Worker (domain riêng). Trống = lấy từ địa chỉ đang truy cập. */
+  PUBLIC_URL?: string
 }
 export type Ctx = { waitUntil(p: Promise<unknown>): void }
 
 const MAX_BODY = 16 * 1024
 const PULL_WINDOW_SEC = 3600
 const KEEP_SEC = 7 * 86400
-const PUSH_TIMEOUT_MS = 4000
-
-const SECURITY = {
-  'x-content-type-options': 'nosniff',
-  'x-frame-options': 'DENY',
-  'referrer-policy': 'no-referrer',
-  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
-}
-
-const json = (code: number, body: unknown): Response =>
-  new Response(JSON.stringify(body), { status: code, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...SECURITY } })
 
 const bearer = (req: Request): string => {
   const h = req.headers.get('authorization') ?? ''
@@ -85,108 +83,22 @@ async function readCapped(req: Request, max: number): Promise<string | null> {
   return new TextDecoder().decode(all)
 }
 
-const normalizeOrigin = (u: string | undefined | null): string | null => {
-  const v = (u ?? '').trim().replace(/\/+$/, '')
-  return /^https:\/\/[A-Za-z0-9.-]+(:\d+)?$/.test(v) ? v : null
-}
+type Deps = { now?: () => number; fetchFn?: typeof fetch }
 
-/** Khóa của một Server: Server đời cũ (id rỗng) dùng thẳng khóa gốc, Server mới dùng khóa riêng suy ra từ id. */
-const serverKey = (env: Env, id: string): Promise<string> => (id === '' ? Promise.resolve(env.SYNC_KEY ?? '') : deriveServerKey(env.SYNC_KEY ?? '', id))
-
-async function serverOrigin(env: Env, id: string): Promise<string | null> {
-  const row = await env.DB.prepare('SELECT url FROM servers WHERE id = ?').bind(id).first<{ url: string | null }>()
-  return normalizeOrigin(row?.url) ?? (id === '' ? normalizeOrigin(env.VPS_ORIGIN) : null)
-}
-
-/** Đẩy một tín hiệu về một Server; 2xx thì đánh dấu đã nhận. Lỗi nào cũng nuốt: tín hiệu vẫn nằm trong hàng đợi để Server kéo bù. */
-async function push(env: Env, server: string, id: number, created: number, raw: string, now: number, fetchFn: typeof fetch): Promise<void> {
-  if (!env.SYNC_KEY) return
-  const origin = await serverOrigin(env, server)
-  if (!origin) return
-  const body = JSON.stringify({ wid: id, age: Math.max(0, now - created), raw })
+export async function handle(req: Request, env: Env, ctx: Ctx, deps: Deps = {}): Promise<Response> {
   try {
-    const res = await fetchFn(`${origin}/api/ingest`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-ocean-ts': String(now),
-        'x-ocean-sig': await signBody(await serverKey(env, server), now, body),
-      },
-      body,
-      signal: AbortSignal.timeout(PUSH_TIMEOUT_MS),
-    })
-    await res.body?.cancel()
-    if (res.ok) await env.DB.prepare('UPDATE deliveries SET pushed = 1 WHERE sid = ? AND server = ?').bind(id, server).run()
-  } catch {
-    /* Server không với tới được: chờ kéo bù */
+    return await route(req, env, ctx, deps)
+  } catch (e) {
+    const msg = String((e as Error)?.message ?? e)
+    // Quên chạy migration sau khi cập nhật mã: báo thẳng cách sửa thay vì "internal error" khó hiểu.
+    if (/no such (table|column)/i.test(msg)) {
+      return json(500, { error: 'db_not_migrated', message: 'D1 chưa được cập nhật bảng mới. Chạy: cd worker && npx wrangler d1 migrations apply ocean-relay --remote (hoặc commit có [deploy]).' })
+    }
+    return json(500, { error: 'internal', message: 'Lỗi nội bộ của Worker (xem Observability trên Cloudflare)' })
   }
 }
 
-const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
-
-type Row = { id: number; created: number; raw: string; pushed: number; total: number }
-
-/** Tín hiệu gần đây kèm số Server đã nhận / tổng số Server được giao. */
-const RECENT_SQL =
-  'SELECT s.id, s.created, s.raw, (SELECT COUNT(*) FROM deliveries d WHERE d.sid = s.id) AS total, ' +
-  '(SELECT COUNT(*) FROM deliveries d WHERE d.sid = s.id AND d.pushed = 1) AS pushed FROM signals s ORDER BY s.id DESC LIMIT 20'
-const state = (r: Row): string => (r.total === 0 ? 'chưa có Server nào' : r.pushed >= r.total ? 'đã giao hết' : `đã giao ${r.pushed}/${r.total} Server`)
-
-async function publicPage(env: Env, now: number): Promise<Response> {
-  const rows = (await env.DB.prepare(RECENT_SQL).all<Row>()).results
-  const items = rows
-    .map((r) => `<li><b>#${r.id}</b> <span>${Math.max(0, now - r.created)}s trước · ${state(r)}</span><pre>${esc(r.raw.slice(0, 400))}</pre></li>`)
-    .join('')
-  const html = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OCEAN Relay · Worker</title>
-<style>body{margin:0;padding:16px;font:14px/1.45 system-ui,sans-serif;background:#07131c;color:#e6f4f8}a{color:#19c3b1}h1{font-size:16px;letter-spacing:.06em}ul{list-style:none;padding:0}li{background:#0d2230;border:1px solid #17394d;border-radius:12px;padding:10px 12px;margin:0 0 10px}span{color:#7fa3b3;font-size:12px}pre{margin:6px 0 0;white-space:pre-wrap;word-break:break-all;font:12px ui-monospace,monospace;color:#9fc3d1}</style></head>
-<body><h1>OCEAN<span style="color:#19c3b1"> RELAY</span> · Worker</h1><p>Hộp thư dự phòng (công khai, chỉ đọc). <a href="/help">Hướng dẫn vận hành Worker</a></p>
-<ul>${items || '<li>Chưa có tín hiệu nào.</li>'}</ul></body></html>`
-  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...SECURITY } })
-}
-
-/** Trang hướng dẫn vận hành Worker (công khai, chỉ có lệnh mẫu, KHÔNG chứa khóa nào) để quên thì mở lại xem. */
-function helpPage(): Response {
-  const html = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OCEAN Relay · Hướng dẫn Worker</title>
-<style>body{margin:0;padding:16px;font:14px/1.5 system-ui,sans-serif;background:#07131c;color:#e6f4f8;max-width:760px}a{color:#19c3b1}h1{font-size:16px;letter-spacing:.06em}h2{font-size:14px;margin:22px 0 6px;color:#19c3b1}pre{background:#0d2230;border:1px solid #17394d;border-radius:10px;padding:10px 12px;white-space:pre-wrap;word-break:break-all;font:12px ui-monospace,monospace;color:#cfe8f0}code{font:12px ui-monospace,monospace;color:#9fc3d1}.warn{border-left:3px solid #e0a43a;padding:4px 10px;color:#f0d9a8}</style></head>
-<body><h1>OCEAN<span style="color:#19c3b1"> RELAY</span> · Hướng dẫn Worker</h1>
-<p>Các lệnh dưới đây chạy trên <b>máy dev</b> (máy có mã nguồn và đã đăng nhập Cloudflare), không chạy trên VPS. <a href="/">Về hộp thư tín hiệu</a></p>
-
-<h2>1 · Tạo Worker (chỉ làm một lần)</h2>
-<pre>npm install
-cd worker
-npm install
-npx wrangler login
-npm run setup</pre>
-<p><code>setup</code> tạo database D1, sinh khóa, deploy Worker, in <b>Webhook URL</b> (dán vào TradingView) và ghi khóa gốc vào <code>worker/.ocean-master.json</code>. Tệp này <b>không commit, không gửi cho ai</b>. Chưa có tệp này thì lệnh <code>issue</code> báo "Chưa có worker/.ocean-master.json".</p>
-
-<h2>2 · Cấp mã kết nối cho một VPS</h2>
-<pre>cd worker
-npm run issue -- "Tên VPS"</pre>
-<p>In ra Server ID và mã <code>ocean1.…</code>. Mỗi VPS một mã riêng, gửi RIÊNG cho người dùng VPS đó. Chọn Server ID tự đặt: thêm <code>--id ten-vps</code> (chữ thường, số, gạch ngang, 3-40 ký tự).</p>
-
-<h2>3 · Dán mã trên VPS</h2>
-<p>Mở <code>http://127.0.0.1:8090/#setup</code> <b>ngay trên VPS</b> (xem từ xa sẽ không thấy nút Cài đặt), dán mã vào ô "Mã kết nối", bấm <b>Lưu và kiểm tra kết nối</b>. Huy hiệu Worker báo thông là xong.</p>
-
-<h2>4 · Xem VPS nào đã kết nối</h2>
-<pre>cd worker
-npm run issue -- --list</pre>
-<p>Hiện từng Server: thấy lần cuối khi nào, đã báo địa chỉ chưa, đang chờ bao nhiêu tín hiệu.</p>
-
-<h2>5 · TradingView</h2>
-<p>Alert của indicator → Notifications → Webhook URL = URL do <code>setup</code> in ra (dạng <code>https://…workers.dev/webhook?key=…</code>), chọn <i>Any alert() function call</i>. Không đăng URL này ở nơi công khai.</p>
-
-<h2>Sự cố thường gặp</h2>
-<pre>Missing script: "issue"        -> bạn đang ở thư mục gốc; chạy: cd worker
-Chưa có .ocean-master.json     -> chạy npm run setup trước
-Trang Cài đặt báo 401 / sai mã -> cấp lại mã bằng npm run issue
-Thu hồi một VPS                -> đổi SYNC_KEY gốc rồi cấp lại mã cho các VPS còn dùng
-                                  (node setup.mjs --webhook-key ... --sync-key ...)</pre>
-<p class="warn">Worker lỗi hoặc cần deploy lại: <code>cd worker</code> rồi <code>npm run deploy</code>.</p>
-</body></html>`
-  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...SECURITY } })
-}
-
-export async function handle(req: Request, env: Env, ctx: Ctx, deps: { now?: () => number; fetchFn?: typeof fetch } = {}): Promise<Response> {
+async function route(req: Request, env: Env, ctx: Ctx, deps: Deps): Promise<Response> {
   const now = (deps.now ?? (() => Math.floor(Date.now() / 1000)))()
   const fetchFn = deps.fetchFn ?? fetch
   const url = new URL(req.url)
@@ -194,30 +106,44 @@ export async function handle(req: Request, env: Env, ctx: Ctx, deps: { now?: () 
 
   // 1) Webhook của TradingView. Lưu trước, trả lời ngay (TradingView chỉ chờ ~3 giây và không gửi lại), đẩy về VPS sau.
   if (p === '/webhook' && req.method === 'POST') {
-    if (!env.WEBHOOK_KEY) return json(503, { error: 'webhook_disabled' })
-    if (!(await sameSecret(url.searchParams.get('key') ?? '', env.WEBHOOK_KEY))) return json(401, { error: 'bad_key' })
+    const key = url.searchParams.get('key') ?? ''
+    const legacy = Boolean(env.WEBHOOK_KEY) && (await sameSecret(key, env.WEBHOOK_KEY ?? ''))
+    let hook: { id: number; owner: number; server: string | null; locked: number; owner_locked: number } | null = null
+    if (!legacy) {
+      if (key.length >= 16 && key.length <= 128) {
+        hook = await env.DB.prepare('SELECT h.id, h.owner, h.server, h.locked, u.locked AS owner_locked FROM hooks h JOIN users u ON u.id = h.owner WHERE h.key = ?').bind(key).first()
+      }
+      if (!hook) return json(401, { error: 'bad_key', message: 'Khóa trong Webhook URL sai hoặc đã bị xoay/xóa. Lấy lại URL ở trang quản lý.' })
+      if (hook.owner_locked === 1) return json(403, { error: 'user_locked', message: 'Tài khoản đang bị Admin khóa' })
+      if (hook.locked === 1) return json(403, { error: 'hook_locked', message: 'Webhook này đang bị Admin khóa' })
+    }
     const raw = await readCapped(req, MAX_BODY)
     if (raw === null) return json(413, { error: 'too_large' })
-    if (raw.trim() === '') return json(400, { error: 'empty' })
-    // Giao cho ai: `to=id1,id2` (chỉ các Server nêu tên) hoặc mọi Server đã đăng ký.
-    const toRaw = url.searchParams.get('to')
+    if (raw.trim() === '') return json(400, { error: 'empty', message: 'Nội dung alert trống: kiểm tra ô Message của alert trên TradingView' })
+
     let targets: string[]
-    if (toRaw !== null && toRaw.trim() !== '') {
-      targets = [...new Set(toRaw.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean))]
-      if (targets.length > 20 || targets.some((t) => !SERVER_ID_RE.test(t))) return json(400, { error: 'bad_to' })
+    if (hook) {
+      targets = await hookTargets(env, hook)
     } else {
-      targets = (await env.DB.prepare('SELECT id FROM servers').all<{ id: string }>()).results.map((r) => r.id)
+      const toRaw = url.searchParams.get('to')
+      if (toRaw !== null && toRaw.trim() !== '') {
+        targets = [...new Set(toRaw.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean))]
+        if (targets.length > 20 || targets.some((t) => !SERVER_ID_RE.test(t))) return json(400, { error: 'bad_to' })
+        const locked = await lockedAmong(env, targets)
+        targets = targets.filter((t) => !locked.has(t))
+      } else {
+        targets = await broadcastTargets(env)
+      }
     }
-    const row = await env.DB.prepare('INSERT INTO signals (created, raw) VALUES (?, ?) RETURNING id').bind(now, raw).first<{ id: number }>()
-    if (!row) return json(500, { error: 'store_failed' })
-    for (const t of targets) await env.DB.prepare('INSERT OR IGNORE INTO deliveries (sid, server, pushed) VALUES (?, ?, 0)').bind(row.id, t).run()
-    for (const t of targets) ctx.waitUntil(push(env, t, row.id, now, raw, now, fetchFn))
+    const id = await storeAndDeliver(env, ctx, fetchFn, { raw, owner: hook?.owner ?? null, hook: hook?.id ?? null, targets, now })
+    if (id === null) return json(500, { error: 'store_failed' })
+    if (hook) ctx.waitUntil(env.DB.prepare('UPDATE hooks SET last_used = ?, hits = hits + 1 WHERE id = ?').bind(now, hook.id).run())
     // Dọn tín hiệu cũ thỉnh thoảng (không cần cron): mỗi ~1/50 lần nhận.
-    if (row.id % 50 === 0) {
+    if (id % 50 === 0) {
       ctx.waitUntil(env.DB.prepare('DELETE FROM deliveries WHERE sid IN (SELECT id FROM signals WHERE created < ?)').bind(now - KEEP_SEC).run())
       ctx.waitUntil(env.DB.prepare('DELETE FROM signals WHERE created < ?').bind(now - KEEP_SEC).run())
     }
-    return json(200, { ok: true, id: row.id, servers: targets.length })
+    return json(200, { ok: true, id, servers: targets.length, ...(targets.length === 0 ? { warning: 'no_active_server', message: 'Đã nhận alert nhưng chưa có VPS nào đang hoạt động để giao' } : {}) })
   }
 
   // 2) Server ↔ Worker: header x-ocean-server = Server ID, Bearer = khóa riêng của Server đó (suy ra từ SYNC_KEY gốc).
@@ -226,14 +152,16 @@ export async function handle(req: Request, env: Env, ctx: Ctx, deps: { now?: () 
     const server = (req.headers.get('x-ocean-server') ?? '').trim().toLowerCase()
     if (server !== '' && !SERVER_ID_RE.test(server)) return json(400, { error: 'bad_server_id' })
     if (!(await sameSecret(bearer(req), await serverKey(env, server)))) return json(401, { error: 'bad_key' })
-    // Khóa đúng nghĩa là Server do chủ Worker cấp: tự đăng ký / cập nhật lần liên lạc cuối.
-    await env.DB.prepare('INSERT INTO servers (id, seen) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET seen = excluded.seen').bind(server, now).run()
+    if (server !== '') {
+      if (await env.DB.prepare('SELECT 1 AS x FROM revoked_servers WHERE id = ?').bind(server).first()) return json(403, { error: 'server_revoked', message: 'VPS này đã bị xóa khỏi Worker' })
+      const row = await env.DB.prepare('SELECT s.locked, (SELECT locked FROM users WHERE id = s.owner) AS owner_locked FROM servers s WHERE s.id = ?').bind(server).first<{ locked: number; owner_locked: number | null }>()
+      if (row && (row.locked === 1 || row.owner_locked === 1)) return json(403, { error: 'server_locked', message: 'VPS hoặc tài khoản đang bị Admin khóa' })
+    }
+    await env.DB.prepare('INSERT INTO servers (id, seen, created) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET seen = excluded.seen').bind(server, now, now).run()
 
     if (p === '/api/pull' && req.method === 'GET') {
       const rows = (
-        await env.DB.prepare(
-          'SELECT s.id, s.created, s.raw FROM deliveries d JOIN signals s ON s.id = d.sid WHERE d.server = ? AND d.pushed = 0 AND s.created >= ? ORDER BY s.id ASC LIMIT 50',
-        )
+        await env.DB.prepare('SELECT s.id, s.created, s.raw FROM deliveries d JOIN signals s ON s.id = d.sid WHERE d.server = ? AND d.pushed = 0 AND s.created >= ? ORDER BY s.id ASC LIMIT 50')
           .bind(server, now - PULL_WINDOW_SEC)
           .all<{ id: number; created: number; raw: string }>()
       ).results
@@ -271,18 +199,18 @@ export async function handle(req: Request, env: Env, ctx: Ctx, deps: { now?: () 
     return json(405, { error: 'method_not_allowed' })
   }
 
-  // 3) Công khai, chỉ đọc.
+  // 3) API quản lý (đăng nhập, người dùng, VPS, Webhook, tín hiệu) — xem app.ts.
+  const managed = await appRoute(req, env, ctx, url, { now, fetchFn })
+  if (managed) return managed
+
+  // 4) Công khai: kiểm tra sống, hướng dẫn (không chứa khóa) và trang quản lý (phải đăng nhập mới có dữ liệu).
   if (req.method === 'GET') {
     if (p === '/api/health') return json(200, { status: 'ok', now })
-    if (p === '/api/recent') {
-      const rows = (await env.DB.prepare(RECENT_SQL).all<Row>()).results
-      return json(200, {
-        now,
-        signals: rows.map((r) => ({ id: r.id, age: Math.max(0, now - r.created), servers: r.total, delivered: r.pushed, pushed: r.total > 0 && r.pushed >= r.total, raw: r.raw.slice(0, 400) })),
-      })
-    }
-    if (p === '/') return publicPage(env, now)
     if (p === '/help') return helpPage()
+    if (p === '/') {
+      await ensureAdmin(env, now)
+      return appPage()
+    }
   }
   return json(404, { error: 'not_found' })
 }

@@ -65,9 +65,10 @@ describe('Worker: webhook', () => {
     expect((await hook(SELL, 'sai-khoa')).status).toBe(401)
     expect((await hook('   ')).status).toBe(400)
     expect((await hook('x'.repeat(20_000))).status).toBe(413)
+    // Chưa cấu hình khóa chung và khóa lạ: không khớp Webhook nào → 401 (không lộ là có/không có cấu hình).
     const noKey = await handle(new Request(`${WORKER}/webhook?key=x`, { method: 'POST', body: SELL }), { DB: env.DB }, ctx)
-    expect(noKey.status).toBe(503)
-    expect(((await (await worker('/api/recent')).json()) as { signals: unknown[] }).signals).toHaveLength(0)
+    expect(noKey.status).toBe(401)
+    expect(env.DB.raw.prepare('SELECT COUNT(*) AS c FROM signals').get()).toEqual({ c: 0 })
   })
 
   it('nhận → lưu D1 → trả 200 ngay, rồi đẩy về VPS và đánh dấu đã nhận', async () => {
@@ -151,13 +152,19 @@ describe('Worker: bảo mật & công khai', () => {
     expect((await (await worker('/')).text())).toContain('href="/help"')
     expect((await worker('/help', { method: 'POST' })).status).toBe(404)
   })
-  it('trang công khai chỉ đọc và thoát ký tự HTML trong body alert (không XSS)', async () => {
-    await hook('<script>alert(1)</script> | "><img src=x onerror=alert(2)>')
+  it('trang chủ chỉ là khung đăng nhập: không chứa tín hiệu nào; API tín hiệu cũ không còn công khai', async () => {
+    await hook('<script>alert(1)</script> | \"><img src=x onerror=alert(2)>')
     await settle()
-    const html = await (await worker('/')).text()
-    expect(html).not.toContain('<script>alert(1)')
-    expect(html).not.toContain('<img src=x')
-    expect(html).toContain('&#60;script&#62;')
+    const res = await worker('/')
+    const page = await res.text()
+    expect(page).not.toContain('alert(1)')
+    expect(page).not.toContain('<img src=x')
+    const nonce = /<script nonce="([^"]+)">/.exec(page)?.[1] ?? ''
+    expect(nonce.length).toBeGreaterThan(10)
+    expect(res.headers.get('content-security-policy')).toContain(`script-src 'nonce-${nonce}'`)
+    expect(res.headers.get('content-security-policy')).toContain("default-src 'none'")
+    expect((await worker('/api/recent')).status).toBe(404)
+    expect((await worker('/api/signals')).status).toBe(401)
     expect((await worker('/', { method: 'POST' })).status).toBe(404)
   })
 })

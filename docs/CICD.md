@@ -26,7 +26,7 @@ Secret cần đặt trong **Settings → Secrets and variables → Actions**:
 | `CLOUDFLARE_ACCOUNT_ID` | ID tài khoản Cloudflare |
 | `D1_DATABASE_ID` | `database_id` của D1 `ocean-relay`. Chỉ cần khi `worker/wrangler.jsonc` trong repo còn ID giả `0000…` |
 
-`WEBHOOK_KEY` và `SYNC_KEY` là secret của Worker, đặt **một lần** bằng `cd worker && npm run setup`; workflow không đụng tới chúng nên deploy không làm đổi khóa.
+`WEBHOOK_KEY`, `SYNC_KEY` và `ADMIN_PASSWORD` là secret của Worker, đặt **một lần** bằng `cd worker && npm run setup`; workflow không đụng tới chúng nên deploy không làm đổi khóa.
 
 ## `release-server.yml` — bộ cài Server
 Chạy trên `windows-latest`: `typecheck` + test → đọc `version` từ `package.json` → dừng nếu release `server-v<version>` đã có → `npm run pack` (esbuild + gói `release/ocean-relay` kèm `node.exe`) → **smoke test** (chạy gói thật: gửi đúng alert mẫu một dòng text qua webhook, yêu cầu Server đọc ra `kind=entry`; kiểm tra trang Cài đặt mở được trên máy cục bộ, từ chối mã sai và từ chối yêu cầu qua tunnel) → Inno Setup (`Installer/ocean-relay.iss`) → SHA256 → Artifacts + GitHub Release `server-v<version>`.

@@ -2,29 +2,37 @@
 
 Cần: tài khoản Cloudflare (gói free đủ), VPS Windows chạy MT5 cho mỗi người dùng, Node 22.13+ trên máy của chủ Worker.
 
-## 1. Worker (một lần, trên máy dev)
+## 1. Worker (Admin làm MỘT lần, trên máy dev)
 ```bash
 npm install
 cd worker && npm install
 npx wrangler login
-npm run setup      # tạo D1, nạp schema, sinh WEBHOOK_KEY + SYNC_KEY, đặt secret, deploy
+npm run setup      # tạo D1, áp migration, sinh khóa + mật khẩu Admin, đặt secret, deploy
 ```
-Về sau cập nhật Worker bằng commit có `[deploy]` (secret GitHub trong [CICD.md](CICD.md)). Lệnh in **Webhook URL** (dán vào TradingView). Khóa gốc `SYNC_KEY` được ghi vào `worker/.ocean-master.json` (đã `.gitignore`): **không đưa cho người dùng, không commit**. Worker đã chạy bản cũ thì chạy lại `npm run setup` (hoặc commit `[deploy]`) để tạo bảng mới; người dùng cũ cần mã kết nối mới.
-Dùng lại khóa cũ: `node setup.mjs --webhook-key … --sync-key …`.
+Lệnh in ra **địa chỉ trang quản lý** và **tài khoản Admin + mật khẩu tạm** (đổi ngay ở lần đăng nhập đầu). Khóa gốc `SYNC_KEY` ghi vào `worker/.ocean-master.json` (đã `.gitignore`): **không đưa cho người dùng, không commit**. Chạy lại `npm run setup` không đổi khóa (đổi khóa: `node setup.mjs --new-keys`, mọi mã kết nối cũ mất hiệu lực).
 
-## 2. Phát mã kết nối cho từng người dùng (trên máy của chủ Worker)
-```bash
-cd worker
-npm run issue -- "Anh Nam"       # in Server ID + mã ocean1.… gửi RIÊNG cho người đó
-npm run issue -- --list          # Server nào đã kết nối, thấy lần cuối khi nào, đang chờ bao nhiêu tín hiệu
-```
-Mã chứa địa chỉ Worker, Server ID và **khóa riêng** của Server đó (suy ra từ khóa gốc, Worker không phải lưu danh sách khóa). Muốn thu hồi: đổi khóa gốc (`node setup.mjs --webhook-key … --sync-key …`) rồi cấp lại mã cho những người còn dùng.
+Về sau cập nhật Worker bằng commit có `[deploy]` (secret GitHub trong [CICD.md](CICD.md)): workflow tự áp migration, không cần chạy lệnh nào.
 
-**Định tuyến tín hiệu.** Mặc định alert đi tới mọi Server đã đăng ký; mỗi Server chỉ thấy và chỉ kéo được tín hiệu của chính nó. Chỉ gửi cho một số Server: thêm `&to=<server-id>[,<server-id>]` vào Webhook URL (mỗi nhóm người dùng một alert riêng). Server chỉ đăng ký sau lần liên lạc đầu tiên, nên tín hiệu bắn trước đó không được giao cho nó (dùng `&to=` nếu muốn giữ chỗ trước).
-Trong một Server, chỉ các tài khoản MT5 khai ở `OCEAN_ACCOUNTS` mới nhận tín hiệu; tín hiệu trùng hay nhiều alert về cùng lúc vẫn chỉ vào đúng tài khoản đó, và mỗi tín hiệu chỉ đánh một lần cho mỗi tài khoản.
+**Nâng cấp Worker đã chạy bản cũ** (chưa có tài khoản): commit `[deploy]` (hoặc `cd worker && npx wrangler d1 migrations apply ocean-relay --remote`), rồi `npx wrangler secret put ADMIN_PASSWORD` và mở trang quản lý một lần để Admin được tạo. VPS cấp bằng `npm run issue` vẫn chạy bình thường và thuộc về Admin. Thiếu migration thì Worker trả `db_not_migrated` kèm cách sửa.
+
+> Không nạp `schema.sql` lên D1 thật: nó chỉ dùng cho test/dev. Migration 0003 có `ALTER TABLE` nên phải đi qua `migrations apply`.
+
+## 2. Cấp tài khoản cho người dùng (Admin, không cần dòng lệnh)
+Đăng nhập trang quản lý → tab **Người dùng** → **+ Tạo**: đặt tên đăng nhập và hạn mức VPS/Webhook, gửi RIÊNG cho họ địa chỉ trang + tên đăng nhập + mật khẩu tạm (chỉ hiện một lần). Không có đăng ký tự do; người dùng phải tự đổi mật khẩu ở lần đăng nhập đầu.
+
+Admin có thể: tăng/giảm hạn mức; khóa/mở khóa việc **thêm VPS mới** hoặc **tạo Webhook mới**; khóa/mở khóa từng VPS, từng Webhook hoặc cả tài khoản (mọi VPS + Webhook của người đó ngừng chạy ngay); đặt lại mật khẩu; xóa tài khoản; thấy mọi VPS, Webhook, tín hiệu. Người dùng chỉ thấy và thao tác trên của chính mình.
+
+**Người dùng tự làm trên trang** (trong hạn mức): **+ Thêm VPS** → trang sinh mã kết nối `ocean1.…` (nút Sao chép) ; **+ Tạo Webhook URL** → trang sinh URL `…/webhook?key=…` (nút Sao chép), có nút **Gửi thử** và **Đổi khóa**. Tab **Hướng dẫn** có thiết lập 3 bước và bảng sự cố thường gặp.
+
+Xem VPS nào đang kết nối: tab **Kết nối** (trạng thái, chủ sở hữu, lần liên lạc cuối, số tín hiệu đang chờ) hoặc `cd worker && npm run issue -- --list`.
+
+**Định tuyến tín hiệu.** Webhook của một người chỉ giao cho VPS của chính người đó (hoặc đúng một VPS nếu Webhook gắn với VPS). Webhook URL chung cũ (`WEBHOOK_KEY`) chỉ giao cho VPS của Admin/VPS đời cũ; thêm `&to=<server-id>[,<server-id>]` để chọn đích. Mỗi Server chỉ thấy và chỉ kéo được tín hiệu của chính nó; VPS bị khóa/xóa bị Worker từ chối (HTTP 403 `server_locked` / `server_revoked`).
+Trong một Server, chỉ các tài khoản MT5 khai ở `OCEAN_ACCOUNTS` mới nhận tín hiệu; mỗi tín hiệu chỉ đánh một lần cho mỗi tài khoản.
+
+**Cách cũ (vẫn dùng được):** `cd worker && npm run issue -- "Tên VPS"` cấp mã cho VPS thuộc về Admin. Thu hồi VPS kiểu này: đổi khóa gốc.
 
 ## 3. Người dùng cuối cài trên VPS
-Gửi cho họ `OceanRelay-Setup.exe` (trang Release) cùng mã kết nối, và [USER-GUIDE.md](USER-GUIDE.md). Bộ cài không hỏi gì và làm hết: Server, Quick Tunnel, Gateway, chép và biên dịch EA; cài xong tự mở trang Cài đặt để người dùng dán mã (đổi lại sau này cũng ở đó, không cần cài lại). Cài im lặng (mọi tham số tùy chọn):
+Gửi cho họ `OceanRelay-Setup.exe` (trang Release) và [USER-GUIDE.md](USER-GUIDE.md); mã kết nối họ tự lấy ở trang quản lý (nút **Lấy mã kết nối**). Bộ cài không hỏi gì và làm hết: Server, Quick Tunnel, Gateway, chép và biên dịch EA; cài xong tự mở trang Cài đặt để người dùng dán mã (đổi lại sau này cũng ở đó, không cần cài lại). Cài im lặng (mọi tham số tùy chọn):
 ```powershell
 .\OceanRelay-Setup.exe /VERYSILENT [/CODE=ocean1.xxxx] [/ACCOUNTS=900001] [/GWPORT=47860]
 ```
@@ -37,7 +45,7 @@ Cài tay (bản portable): `.\scripts\install-server.ps1 [-ConnectCode ocean1.xx
 4. Bật `InpAllowTrading=true`, chỉnh `InpLotPerOrder`, `InpMaxTotalLots`, `InpMaxDevPoints` rồi mới dùng thật.
 
 ## 5. TradingView
-Tạo alert từ indicator OCEAN VIP → Notifications → Webhook URL = URL ở bước 1; chọn **Any alert() function call**.
+Người dùng sao chép URL ở trang quản lý (tab Kết nối). Tạo alert từ indicator OCEAN VIP → Notifications → Webhook URL = URL đó; Condition chọn **Any alert() function call**. TradingView chỉ cho Webhook khi tài khoản có gói trả phí và đã bật xác thực 2 lớp (2FA). Bấm **Gửi thử** để kiểm tra đường đi trước khi chờ alert thật.
 
 ## Không dùng Worker (tối giản)
 Bỏ `OCEAN_WORKER_URL`/`OCEAN_SYNC_KEY`, đặt `OCEAN_WEBHOOK_KEY` và mở Server ra internet bằng tunnel có tên. Mất tín hiệu khi VPS/tunnel sập (TradingView không gửi lại) — đó là lý do Worker tồn tại.

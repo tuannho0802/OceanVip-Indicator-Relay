@@ -131,7 +131,10 @@ export class WorkerSync {
         }
         if (!res.ok) {
             await res.body?.cancel()
-            this.lastError = `Worker trả HTTP ${res.status}${res.status === 401 ? ' (mã kết nối sai hoặc đã bị thu hồi?)' : ''}`
+            let why = ''
+            if (res.status === 401) why = ' (mã kết nối sai hoặc Worker đã đổi khóa gốc?)'
+            else if (res.status === 403) why = ' (VPS hoặc tài khoản bị Admin khóa, hoặc VPS đã bị xóa khỏi Worker: hỏi Admin)'
+            this.lastError = `Worker trả HTTP ${res.status}${why}`
             this.o.log.warn(`worker: ${this.lastError}`)
             return false
         }

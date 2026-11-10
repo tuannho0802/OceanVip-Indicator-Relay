@@ -63,6 +63,11 @@ const CLIENT_JS = String.raw`
     for (var i = 2; i < arguments.length; i++) add(e, arguments[i])
     return e
   }
+  /** Đọc giá trị ô nhập theo tên. KHÔNG dùng form.name/form.action...: các tên đó là thuộc tính của chính form. */
+  function val(f, n) {
+    var e = f.elements.namedItem(n)
+    return e ? e.value : ''
+  }
   function ago(s) {
     if (s === null || s === undefined) return 'chưa lần nào'
     if (s < 5) return 'vừa xong'
@@ -467,7 +472,7 @@ const CLIENT_JS = String.raw`
   }
   var forms = {
     login: function (f) {
-      api('POST', '/api/login', { username: f.username.value, password: f.password.value }).then(function (r) {
+      api('POST', '/api/login', { username: val(f, 'username'), password: val(f, 'password') }).then(function (r) {
         S.notice = ''
         S.user = r.user
         if (r.user.must_change) render()
@@ -475,8 +480,8 @@ const CLIENT_JS = String.raw`
       }).catch(function (e) { S.notice = e.message; render() })
     },
     password: function (f) {
-      if (f.next.value !== f.again.value) return toast('Hai ô mật khẩu mới không giống nhau', true)
-      call('POST', '/api/password', { current: f.current.value, next: f.next.value }, 'Đã đổi mật khẩu').then(function (r) {
+      if (val(f, 'next') !== val(f, 'again')) return toast('Hai ô mật khẩu mới không giống nhau', true)
+      call('POST', '/api/password', { current: val(f, 'current'), next: val(f, 'next') }, 'Đã đổi mật khẩu').then(function (r) {
         if (!r) return
         S.user.must_change = false
         S.tab = 'conn'
@@ -484,7 +489,7 @@ const CLIENT_JS = String.raw`
       })
     },
     addServer: function (f) {
-      call('POST', '/api/servers', { name: f.name.value }).then(function (r) {
+      call('POST', '/api/servers', { name: val(f, 'name') }).then(function (r) {
         if (!r) return
         S.codes[r.id] = r.code
         showServerSecret(r, 'Đã tạo VPS “' + r.name + '”')
@@ -492,17 +497,17 @@ const CLIENT_JS = String.raw`
       })
     },
     addHook: function (f) {
-      call('POST', '/api/hooks', { name: f.name.value, server: f.server.value || null }, 'Đã tạo Webhook URL: bấm Sao chép rồi dán vào TradingView').then(function (r) { if (r) refresh() })
+      call('POST', '/api/hooks', { name: val(f, 'name'), server: val(f, 'server') || null }, 'Đã tạo Webhook URL: bấm Sao chép rồi dán vào TradingView').then(function (r) { if (r) refresh() })
     },
     addUser: function (f) {
-      call('POST', '/api/users', { username: f.username.value, role: f.role.value, max_servers: Number(f.max_servers.value), max_hooks: Number(f.max_hooks.value) }).then(function (r) {
+      call('POST', '/api/users', { username: val(f, 'username'), role: val(f, 'role'), max_servers: Number(val(f, 'max_servers')), max_hooks: Number(val(f, 'max_hooks')) }).then(function (r) {
         if (!r) return
         S.secret = { title: 'Đã tạo tài khoản ' + r.username, lines: [['Tên đăng nhập', r.username], ['Mật khẩu tạm', r.password]], note: 'Mật khẩu chỉ hiện một lần. Gửi riêng cho người dùng; họ phải tự đổi ở lần đăng nhập đầu.' }
         refresh()
       })
     },
     limits: function (f) {
-      call('PATCH', '/api/users/' + f.getAttribute('data-id'), { max_servers: Number(f.max_servers.value), max_hooks: Number(f.max_hooks.value) }, 'Đã lưu hạn mức').then(function (r) { if (r) refresh() })
+      call('PATCH', '/api/users/' + f.getAttribute('data-id'), { max_servers: Number(val(f, 'max_servers')), max_hooks: Number(val(f, 'max_hooks')) }, 'Đã lưu hạn mức').then(function (r) { if (r) refresh() })
     }
   }
 

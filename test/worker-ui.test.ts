@@ -114,7 +114,7 @@ describe('trang quản lý của Worker (giao diện thật)', () => {
         await u.settle()
         u.tab('sigs')
         await u.until(() => u.text().includes('OCEAN TEST'), 'tín hiệu thử')
-        expect(u.text()).toContain('chưa có VPS') // VPS chưa liên lạc lần nào nên chưa được giao: báo rõ thay vì im lặng
+        expect(u.text()).toContain('đã giao 0/1 VPS') // VPS mới tạo chưa liên lạc: tín hiệu xếp hàng chờ VPS kéo về, trạng thái hiện rõ
 
         u.tab('guide')
         await u.until(() => u.text().includes('Sự cố thường gặp'), 'tab hướng dẫn')

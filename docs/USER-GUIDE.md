@@ -1,6 +1,13 @@
 # Hướng dẫn cho người dùng cuối
 
-Bạn có một VPS Windows chạy MT5 và đã nhận từ người quản trị một **mã kết nối** (chuỗi bắt đầu bằng `ocean1.`).
+Bạn có một VPS Windows chạy MT5 và một tài khoản do người quản trị cấp (địa chỉ trang quản lý + tên đăng nhập + mật khẩu tạm).
+
+**Lấy mã kết nối và Webhook URL (không cần gõ lệnh):**
+1. Mở trang quản lý, đăng nhập, đổi mật khẩu khi được yêu cầu (lần đầu).
+2. Tab **Kết nối** → **+ Thêm VPS** → bấm **Sao chép** ở **mã kết nối** (chuỗi bắt đầu bằng `ocean1.`). Mã này dán trên VPS ở bước dưới.
+3. Cũng ở tab **Kết nối** → **+ Tạo Webhook URL** → **Sao chép URL** để dán vào alert TradingView (Notifications → Webhook URL; Condition: *Any alert() function call*). Bấm **Gửi thử** để kiểm tra; kết quả xem ở tab **Tín hiệu**.
+4. Hết hạn mức hoặc nút bị mờ thì liên hệ quản trị. Gặp lỗi thì xem tab **Hướng dẫn** (bảng sự cố thường gặp).
+
 
 ## Cài (một lần)
 1. Tải `OceanRelay-Setup.exe` từ trang Release, chạy bằng quyền Administrator. **Bộ cài không hỏi gì**: bấm Next đến hết, nó tự cài Server, Gateway, chép và biên dịch EA vào MT5, tự chạy cùng Windows.
@@ -38,7 +45,8 @@ Mỗi tín hiệu vào lệnh mở **3 lệnh cùng chiều, cùng giá vào, c�
 |---|---|
 | EA không kết nối được Gateway (`HTTP=-1`/4060), hoặc mục Trạng thái báo "Gateway chưa mở được cổng" | Cổng trùng chương trình khác, hoặc chưa thêm đúng địa chỉ vào Allow WebRequest / `InpGateway`. Xem mục "Đổi cổng Gateway" ở trên. |
 | Log Gateway: HTTP 403 | Số tài khoản MT5 không nằm trong danh sách đã khai. Mở trang Cài đặt, sửa ô tài khoản. |
-| Trang Cài đặt báo lỗi 401 / mã kết nối sai | Nhờ quản trị cấp lại mã rồi dán lại ở trang Cài đặt. |
+| Trang Cài đặt báo lỗi 401 / mã kết nối sai | Lấy lại mã ở trang quản lý (tab Kết nối → **Lấy mã kết nối**) rồi dán lại ở trang Cài đặt. Nếu VPS đã bị xóa khỏi danh sách thì tạo VPS mới. |
+| Trang Cài đặt báo HTTP 403 | Quản trị đang khóa VPS hoặc tài khoản của bạn (hoặc VPS đã bị xóa): hỏi quản trị. |
 | EA báo `no_symbol` | Sàn không có symbol đó hoặc có nhiều tên gần giống: xem Experts log, rồi đặt "Đổi tên symbol" trong mục Nâng cao của trang Cài đặt. |
 | Nút Cài đặt không hiện | Bạn đang xem từ xa. Mở http://127.0.0.1:8090/ ngay trên VPS. |
 | Địa chỉ nhận tín hiệu "đang tạo" mãi | Chờ vài chục giây; nếu vẫn vậy kiểm tra VPS ra Internet được. Trong lúc này Server vẫn tự lấy tín hiệu từ Worker (chậm hơn một chút). |

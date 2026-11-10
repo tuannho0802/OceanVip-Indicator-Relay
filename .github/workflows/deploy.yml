@@ -10,7 +10,7 @@ name: Deploy Worker
 #   CLOUDFLARE_API_TOKEN   token có quyền Workers Scripts:Edit và D1:Edit
 #   CLOUDFLARE_ACCOUNT_ID  ID tài khoản Cloudflare
 #   D1_DATABASE_ID         database_id thật của D1 "ocean-relay" (chỉ cần khi worker/wrangler.jsonc trong repo còn ID giả)
-# WEBHOOK_KEY và SYNC_KEY là secret của Worker, đặt MỘT LẦN bằng `cd worker && npm run setup`; deploy không đụng tới chúng.
+# WEBHOOK_KEY, SYNC_KEY và ADMIN_PASSWORD là secret của Worker, đặt MỘT LẦN bằng `cd worker && npm run setup`; deploy không đụng tới chúng.
 # Bộ cài Server có workflow riêng (release-server.yml, tag [release-server]).
 on:
   push:
@@ -77,7 +77,7 @@ jobs:
             if grep -q "$fake" wrangler.jsonc; then echo "::error::Van con database_id gia"; exit 1; fi
           fi
 
-      # Migration chỉ có CREATE ... IF NOT EXISTS nên chạy lại trên D1 do setup.mjs tạo (nạp schema.sql) là an toàn.
+      # Migration 0003 có ALTER TABLE nên mỗi tệp chỉ được chạy đúng một lần: wrangler theo dõi tệp đã áp (bảng d1_migrations). setup.mjs cũng dùng `migrations apply`, KHÔNG nạp schema.sql.
       - name: Migration D1 (remote)
         working-directory: worker
         run: npx wrangler d1 migrations apply ocean-relay --remote
