@@ -166,8 +166,14 @@ export type QuickTunnelOptions = {
   healthEveryMs?: number
   /** Sau khi báo địa chỉ, chờ chừng này mới bắt đầu kiểm (ms). Mặc định 30 giây. */
   graceMs?: number
-  /** Có địa chỉ mà chưa thấy cloudflared báo "Registered tunnel connection" thì vẫn báo cho Worker sau chừng này (ms). Mặc định 15 giây. */
-  announceAfterMs?: number
+  /** Chạy xong chừng này (ms) mà cloudflared vẫn chưa nối được tới Cloudflare ("Registered tunnel connection") thì bỏ, chạy lại bằng giao thức khác. Mặc định 60 giây. */
+  registerTimeoutMs?: number
+  /**
+   * Giao thức cloudflared nối tới Cloudflare, thử lần lượt: lần chạy nào KHÔNG nối được thì lần sau đổi sang giao thức kế tiếp,
+   * nối được rồi thì giữ nguyên. Mặc định ['http2', 'quic']: http2 đi TCP 7844 nên qua được nhiều VPS/mạng chặn UDP (quic dùng UDP 7844).
+   * Đặt biến môi trường OCEAN_TUNNEL_PROTOCOL=http2|quic để cố định một giao thức.
+   */
+  protocols?: string[]
   /** Số lần kiểm hỏng LIÊN TIẾP thì khởi động lại cloudflared. Mặc định 3. */
   maxFails?: number
   /** Thời gian chờ trước lần chạy lại (ms), tăng dần rồi giữ ở mức cuối. */
@@ -216,7 +222,10 @@ export class QuickTunnel {
   private proc: ChildProcess | null = null
   private stopped = true
   private timers = new Set<NodeJS.Timeout>()
-  private announceTimer: NodeJS.Timeout | null = null
+  private watchdog: NodeJS.Timeout | null = null
+  private protoIdx = 0
+  private runRegistered = false
+  private runWarns = 0
   private wake: (() => void) | null = null
   private fails = 0
   private urlAt = 0
@@ -266,7 +275,7 @@ export class QuickTunnel {
     this.stopped = true
     for (const t of this.timers) clearInterval(t)
     this.timers.clear()
-    this.clearAnnounce()
+    this.clearWatchdog()
     this.wake?.()
     this.proc?.kill()
   }
@@ -277,9 +286,16 @@ export class QuickTunnel {
     this.stateAt = Date.now()
   }
 
-  private clearAnnounce(): void {
-    if (this.announceTimer) clearTimeout(this.announceTimer)
-    this.announceTimer = null
+  private clearWatchdog(): void {
+    if (this.watchdog) clearTimeout(this.watchdog)
+    this.watchdog = null
+  }
+
+  private protocols(): string[] {
+    const env = (process.env.OCEAN_TUNNEL_PROTOCOL ?? '').trim().toLowerCase()
+    const fixed = env === 'http2' || env === 'quic' ? [env] : null
+    const list = this.opts.protocols ?? fixed ?? ['http2', 'quic']
+    return list.length > 0 ? list : ['http2']
   }
 
   private async loop(): Promise<void> {
@@ -306,13 +322,18 @@ export class QuickTunnel {
         this.lastError = String(error).slice(0, 200)
         this.opts.log.error(`tunnel: ${this.lastError}`)
       }
-      this.clearAnnounce()
+      this.clearWatchdog()
       this.setUrl(null)
       this.seenUrl = null
       this.conns = 0
       this.fails = 0
       this.buf = ''
       if (this.stopped) return
+      // Lần chạy này chưa từng nối được tới Cloudflare: giao thức này không đi được trên mạng của VPS, lần sau thử giao thức khác.
+      if (!this.runRegistered && this.protocols().length > 1) {
+        this.protoIdx = (this.protoIdx + 1) % this.protocols().length
+        this.opts.log.warn(`tunnel: cloudflared không nối được tới Cloudflare, lần sau thử giao thức ${this.protocols()[this.protoIdx]}`)
+      }
       this.restarts += 1
       this.setState('down')
       // Chạy ổn được một lúc thì coi như lỗi mới, không phạt tiếp lần chờ cũ.
@@ -332,7 +353,9 @@ export class QuickTunnel {
 
   /** Quên trạng thái của lần chạy cloudflared trước (giữ `lastUrl` để giao diện còn nói được "địa chỉ cũ đã chết"). */
   private resetRun(): void {
-    this.clearAnnounce()
+    this.clearWatchdog()
+    this.runRegistered = false
+    this.runWarns = 0
     this.seenUrl = null
     this.conns = 0
     this.fails = 0
@@ -343,12 +366,24 @@ export class QuickTunnel {
   private runOnce(): Promise<void> {
     return new Promise((resolve, reject) => {
       const run = this.opts.spawnFn ?? spawn
+      const protos = this.protocols()
+      const proto = protos[this.protoIdx % protos.length] ?? 'http2'
+      this.opts.log.info(`tunnel: chạy cloudflared (giao thức ${proto})`)
       const proc = run(
         this.opts.binPath,
-        ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${this.opts.port}`],
+        ['tunnel', '--no-autoupdate', '--protocol', proto, '--url', `http://127.0.0.1:${this.opts.port}`],
         { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
       )
       this.proc = proc
+      // Canh: nối được tới Cloudflare là chuyện của vài giây. Quá hạn mà chưa có thì cloudflared đang kẹt (mạng chặn cổng 7844...), chạy lại.
+      this.watchdog = setTimeout(() => {
+        if (this.proc === proc && !this.runRegistered) {
+          this.lastError = `cloudflared không nối được tới Cloudflare sau ${Math.round((this.opts.registerTimeoutMs ?? 60_000) / 1000)} giây (giao thức ${proto})`
+          this.opts.log.warn(`tunnel: ${this.lastError}`)
+          proc.kill()
+        }
+      }, this.opts.registerTimeoutMs ?? 60_000)
+      this.watchdog.unref()
       proc.stdout?.on('data', (b: Buffer) => this.onData(b))
       proc.stderr?.on('data', (b: Buffer) => this.onData(b))
       proc.on('error', (e) => reject(e))
@@ -377,16 +412,20 @@ export class QuickTunnel {
         this.lastUrl = found
         this.setState('connecting')
         this.opts.log.info(`tunnel: cloudflared cấp địa chỉ ${found}, đợi nó nối tới Cloudflare rồi báo cho Worker`)
-        // Phòng khi log không có dòng "Registered" (bản cloudflared khác định dạng): vẫn báo sau một lúc, không gọi thử địa chỉ.
-        this.clearAnnounce()
-        this.announceTimer = setTimeout(() => this.announce(found), this.opts.announceAfterMs ?? 15_000)
-        this.announceTimer.unref()
+        if (this.runRegistered) this.announce(found) // dòng Registered đến trước dòng địa chỉ
       }
     }
-    if (/Unregistered tunnel connection/.test(line)) {
+    // Ghi lại lỗi/cảnh báo của cloudflared (vài dòng đầu mỗi lần chạy) để biết vì sao không nối được, thay vì im lặng.
+    if (this.runWarns < 12 && /\b(ERR|WRN)\b/.test(line)) {
+      this.runWarns += 1
+      this.opts.log.warn(`cloudflared: ${line.trim().slice(0, 220)}`)
+    }
+    if (/Unregistered tunnel connection/i.test(line)) {
       this.conns = Math.max(0, this.conns - 1)
-    } else if (/(?<![A-Za-z])Registered tunnel connection/.test(line)) {
+    } else if (/(?<![A-Za-z])Registered tunnel connection|connection [0-9a-f-]{36} registered/i.test(line)) {
       this.conns += 1
+      this.runRegistered = true
+      this.clearWatchdog()
       if (this.seenUrl) this.announce(this.seenUrl)
     }
   }
@@ -394,7 +433,6 @@ export class QuickTunnel {
   /** Báo địa chỉ cho Worker (một lần cho mỗi địa chỉ). Không gọi thử địa chỉ ở đây. */
   private announce(url: string): void {
     if (this.seenUrl !== url || this.current === url) return
-    this.clearAnnounce()
     this.fails = 0
     this.lastError = ''
     this.checkedAt = 0

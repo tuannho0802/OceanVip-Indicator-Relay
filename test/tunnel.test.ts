@@ -157,7 +157,9 @@ function fakeSpawn() {
     killed: boolean
   }
   const procs: Fake[] = []
+  const argv: string[][] = []
   const spawnFn = ((_cmd: string, _args: string[]) => {
+    argv.push(_args)
     const proc = new EventEmitter() as Fake
     proc.stdout = new PassThrough()
     proc.stderr = new PassThrough()
@@ -169,7 +171,7 @@ function fakeSpawn() {
     procs.push(proc)
     return proc
   }) as never
-  return { spawnFn, procs }
+  return { spawnFn, procs, argv }
 }
 
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms))
@@ -211,7 +213,7 @@ describe('QuickTunnel', () => {
       backoffMs: [5],
       healthEveryMs: 10,
       graceMs: 0,
-      announceAfterMs: 100_000,
+      registerTimeoutMs: 100_000,
       ...extra,
     })
     tunnels.push(t)
@@ -240,17 +242,45 @@ describe('QuickTunnel', () => {
     expect(n.calls).toEqual([]) // không một lần gọi thử nào trong cả quá trình
   })
 
-  it('log không có dòng Registered (bản cloudflared khác định dạng): vẫn báo sau announceAfterMs, không gọi thử', async () => {
-    const n = net({ v: 'dead' })
-    const { t, sp, changes } = make({ fetchFn: n.fetchFn, graceMs: 100_000, announceAfterMs: 40 })
+  it('chạy cloudflared bằng http2 (TCP 7844) trước; lần chạy không nối được tới Cloudflare thì canh quá hạn, giết và lần sau đổi sang quic; nối được rồi thì giữ nguyên giao thức', async () => {
+    const n = net()
+    const { t, sp, changes } = make({ fetchFn: n.fetchFn, registerTimeoutMs: 60, healthEveryMs: 100_000 })
     t.start()
     await tick()
-    sp.procs[0]?.stderr.write('https://one-aaa.trycloudflare.com\n')
+    expect(sp.argv[0]).toEqual(expect.arrayContaining(['--protocol', 'http2']))
+    sp.procs[0]?.stderr.write('INF |  https://stuck-aaa.trycloudflare.com  |\nERR Failed to dial a quic connection error="timeout"\n')
+    await tick(90) // không có dòng Registered: quá hạn (canh 60ms), lần chạy thứ hai vừa bắt đầu
+    expect(sp.procs[0]?.killed).toBe(true)
+    expect(changes).toEqual([]) // không bao giờ báo địa chỉ chưa nối được
+    expect(sp.argv[1]).toEqual(expect.arrayContaining(['--protocol', 'quic']))
+    sp.procs[1]?.stderr.write(`https://ok-bbb.trycloudflare.com\n${REG}`)
+    await tick(30)
+    expect(changes).toEqual(['https://ok-bbb.trycloudflare.com'])
+    sp.procs[1]?.emit('exit', 1) // quic nối được từng rồi: lần sau vẫn quic
+    await tick(60)
+    expect(sp.argv[2]).toEqual(expect.arrayContaining(['--protocol', 'quic']))
+  })
+
+  it('dòng Registered đến trước dòng địa chỉ vẫn báo được', async () => {
+    const { t, sp, changes } = make({ fetchFn: net().fetchFn })
+    t.start()
+    await tick()
+    sp.procs[0]?.stderr.write(REG)
     await tick(10)
     expect(changes).toEqual([])
-    await tick(80)
-    expect(changes).toEqual(['https://one-aaa.trycloudflare.com'])
-    expect(n.calls).toEqual([])
+    sp.procs[0]?.stderr.write('https://late-ccc.trycloudflare.com\n')
+    await tick(30)
+    expect(changes).toEqual(['https://late-ccc.trycloudflare.com'])
+  })
+
+  it('lỗi/cảnh báo của cloudflared được ghi vào log Server (không im lặng)', async () => {
+    const warns: string[] = []
+    const { t, sp } = make({ fetchFn: net().fetchFn, log: { debug() {}, info() {}, error() {}, warn: (m: string) => warns.push(m) } as never })
+    t.start()
+    await tick()
+    sp.procs[0]?.stderr.write('2026-11-10T07:00:00Z ERR Unable to establish connection with Cloudflare edge error="dial tcp: i/o timeout"\n')
+    await tick(30)
+    expect(warns.some((w) => w.startsWith('cloudflared:') && w.includes('i/o timeout'))).toBe(true)
   })
 
   it('cloudflared thoát thì báo null, chạy lại và nhận địa chỉ MỚI', async () => {

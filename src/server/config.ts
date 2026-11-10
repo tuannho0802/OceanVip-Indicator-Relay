@@ -6,7 +6,7 @@ import { DEFAULT_GW_PORT, MAX_PORT, MIN_GW_PORT } from '../shared/defaults'
 import type { LogLevel } from './log'
 import { type Settings, overlayEnv, settingsPath } from './settings'
 
-export const APP_VERSION = process.env.OCEAN_VERSION ?? '0.1.0'
+export const APP_VERSION = process.env.OCEAN_VERSION ?? '0.1.1'
 
 export type ServerConfig = {
   port: number

@@ -4,7 +4,7 @@
 ; khong phai cai lai. Cai dat luu o C:\ProgramData\OceanRelay\settings.json nen nang cap bo cai khong lam mat.
 ; Build (CI: .github/workflows/release-server.yml lam het):
 ;   npm run pack            (tao release\ocean-relay, da kem node.exe khi chay tren Windows)
-;   ISCC /DMyAppVersion=0.1.0 Installer\ocean-relay.iss
+;   ISCC /DMyAppVersion=0.1.1 Installer\ocean-relay.iss
 ; Cai im lang (cho script/CI), tat ca tham so deu KHONG bat buoc:
 ;   OceanRelay-Setup.exe /VERYSILENT [/CODE=ocean1.xxxx] [/ACCOUNTS=900001,900002] [/PORT=8090] [/WEBHOOKKEY=<>=16 ky tu>]
 ;       [/GATEWAY=0 (khong cai Gateway)] [/SYMBOLMAP=XAUUSD=XAUUSDm] [/TFS=M3,M5,M15,H1]
@@ -15,7 +15,7 @@
 ; Go cai dat: go tac vu, giu du lieu o C:\ProgramData\OceanRelay.
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "0.1.1"
 #endif
 #define MyAppName "OCEAN Relay"
 #define Pkg "..\release\ocean-relay"
