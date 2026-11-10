@@ -8,6 +8,7 @@ import { type SignalRow, Store } from './db'
 import { type Logger, nullLogger } from './log'
 import { FailLimiter } from './ratelimit'
 import type { SetupController } from './setup'
+import type { TunnelStatus } from './tunnel'
 import type { IngestResult, WorkerItem } from './worker-sync'
 
 const MAX_BODY = 16 * 1024
@@ -90,6 +91,8 @@ export type AppDeps = {
   log?: Logger
   /** Địa chỉ Quick Tunnel hiện tại (hoặc null). */
   tunnelUrl?: () => string | null
+  /** Tình trạng Quick Tunnel (trạng thái, địa chỉ, lần kiểm gần nhất) để giao diện luôn hiện đúng tunnel đang chạy. */
+  tunnelStatus?: () => TunnelStatus | null
   /** Tình trạng đồng bộ với Worker, để hiện trên giao diện. */
   workerStatus?: () => { lastPollOk: number; lastError: string; pulled: number }
   /** Trang Cài đặt (đổi mã kết nối, tài khoản... ngay trên giao diện). Không có thì các đường /api/setup trả 404. */
@@ -351,7 +354,14 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
           ? { port: cfg.gatewayPortSet || gwLink.at === 0 || gwLink.port === 0 ? cfg.gatewayPort : gwLink.port, listening: gwLink.at > 0 ? gwLink.port : null, error: gwLink.error, lastSeenAgoSec: gwLink.at > 0 ? now - gwLink.at : null }
           : null,
         needsSetup: cfg.workerUrl === '' && cfg.webhookKey === '',
+        // Chỉ là địa chỉ ĐÃ thông (đã báo Worker). Tunnel đang tạo/đã rớt thì null, trạng thái chi tiết nằm ở `tunnel`.
         baseUrl: cfg.publicUrl || deps.tunnelUrl?.() || null,
+        tunnel: (() => {
+          const t = cfg.publicUrl ? null : deps.tunnelStatus?.()
+          if (!t) return null
+          const wall = Date.now()
+          return { state: t.state, url: t.url, lastUrl: t.lastUrl, sinceSec: Math.max(0, Math.round((wall - t.since) / 1000)), restarts: t.restarts, error: t.error, checkedAgoSec: t.checkedAt > 0 ? Math.max(0, Math.round((wall - t.checkedAt) / 1000)) : null, rttMs: t.rttMs, connections: t.connections }
+        })(),
         serverId: cfg.serverId || null,
         accounts: cfg.accounts.map(maskLogin),
         worker: cfg.workerUrl

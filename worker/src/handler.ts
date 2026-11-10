@@ -1,7 +1,7 @@
 import { SERVER_ID_RE } from '../../src/shared/connect'
 import { sameSecret } from '../../src/shared/hmac'
 import { appRoute, ensureAdmin } from './app'
-import { broadcastTargets, hookTargets, lockedAmong, normalizeOrigin, serverKey, storeAndDeliver } from './deliver'
+import { broadcastTargets, hookTargets, lockedAmong, normalizeOrigin, pollHint, serverKey, storeAndDeliver } from './deliver'
 import { json } from './http'
 import { appPage, helpPage } from './ui'
 
@@ -164,7 +164,12 @@ async function route(req: Request, env: Env, ctx: Ctx, deps: Deps): Promise<Resp
           .bind(server, now - PULL_WINDOW_SEC)
           .all<{ id: number; created: number; raw: string }>()
       ).results
-      return json(200, { now, items: rows.map((r) => ({ wid: r.id, age: Math.max(0, now - r.created), raw: r.raw })) })
+      // Kèm địa chỉ tunnel Worker đang giữ cho VPS này (Server so với địa chỉ thật của nó và tự báo lại nếu lệch: chữa địa chỉ cũ/đã chết)
+      // và gợi ý nhịp kéo dày hơn khi đường đẩy đang hụt.
+      const known = await env.DB.prepare('SELECT url FROM servers WHERE id = ?').bind(server).first<{ url: string | null }>()
+      const url = normalizeOrigin(known?.url) ?? null
+      const poll = await pollHint(env, server, url, now)
+      return json(200, { now, tunnel: url, ...(poll !== null ? { poll } : {}), items: rows.map((r) => ({ wid: r.id, age: Math.max(0, now - r.created), raw: r.raw })) })
     }
 
     if (p === '/api/ack' && req.method === 'POST') {

@@ -89,6 +89,32 @@ export async function readDiags(env: Env): Promise<Map<string, PushDiag>> {
     return out
 }
 
+export async function readDiag(env: Env, id: string): Promise<PushDiag | null> {
+    const row = await env.DB.prepare('SELECT v FROM kv WHERE k = ?').bind(diagKey(id)).first<{ v: string }>()
+    if (!row) return null
+    try {
+        const d = JSON.parse(row.v) as Partial<PushDiag>
+        return typeof d.at === 'number' && typeof d.ok === 'boolean' ? { at: d.at, ok: d.ok, tries: Number(d.tries) || 0, status: typeof d.status === 'number' ? d.status : null, error: typeof d.error === 'string' ? d.error : null, ms: Number(d.ms) || 0 } : null
+    } catch {
+        return null
+    }
+}
+
+/** Đẩy đang hụt (hoặc Worker chưa có địa chỉ VPS): bảo Server kéo bù dày hơn chu kỳ cấu hình cho tới khi đẩy được lại. */
+export const FAST_POLL_SEC = 10
+const FAST_POLL_WINDOW_SEC = 900
+
+/**
+ * Gợi ý nhịp kéo bù cho một Server (giây), hoặc null = cứ theo cấu hình. Worker là cầu chính nên Worker biết đường đẩy có khỏe không:
+ * lần đẩy gần nhất hụt (trong 15 phút) hoặc chưa có địa chỉ để đẩy thì kéo dày để tín hiệu không phải chờ 300 giây rồi quá hạn.
+ * Server chỉ nhận gợi ý làm DÀY thêm, không bao giờ thưa hơn cấu hình của nó.
+ */
+export async function pollHint(env: Env, id: string, url: string | null, now: number): Promise<number | null> {
+    if (normalizeOrigin(url) === null && !(id === '' && normalizeOrigin(env.VPS_ORIGIN))) return FAST_POLL_SEC
+    const d = await readDiag(env, id)
+    return d && !d.ok && now - d.at < FAST_POLL_WINDOW_SEC ? FAST_POLL_SEC : null
+}
+
 /** 4xx nào thử lại cũng vô ích (sai khóa/lệch giờ/bị từ chối). Còn lại (404 địa chỉ tunnel cũ, 408, 425, 429) là tạm thời nên vẫn thử tiếp. */
 const permanent = (status: number): boolean => status >= 400 && status < 500 && ![404, 408, 425, 429].includes(status)
 

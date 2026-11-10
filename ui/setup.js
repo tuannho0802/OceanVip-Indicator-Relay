@@ -62,7 +62,11 @@
     else if(w.lastPollAgoSec!==null&&!w.error)L.push(check('ok','Đã kết nối Worker (liên lạc lần cuối '+ago(w.lastPollAgoSec)+' trước)'));
     else L.push(check('bad','Chưa thông với Worker: '+(w.error||'đang thử kết nối…')));
     if(w){
-      if(info.baseUrl)L.push(check('ok','Địa chỉ nhận tín hiệu: '+info.baseUrl));
+      const t=info.tunnel;
+      if(t&&t.state==='ok')L.push(check('ok','Tunnel đang hoạt động: '+t.url+(t.checkedAgoSec!==null?' (kiểm tra '+ago(t.checkedAgoSec)+' trước'+(t.rttMs!==null?', '+t.rttMs+' ms':'')+')':'')));
+      else if(t&&t.state==='down')L.push(check('bad','Tunnel đã rớt'+(t.lastUrl?': địa chỉ '+t.lastUrl+' không còn dùng được':'')+(t.error?' ('+t.error+')':'')+'. Server đang tự tạo tunnel mới và sẽ báo địa chỉ mới cho Worker. Trong lúc này Server vẫn kéo tín hiệu từ Worker'+(t.restarts?' (đã chạy lại tunnel '+t.restarts+' lần)':'')+'.'));
+      else if(t)L.push(check('warn','Đang tạo/kiểm tra tunnel'+(t.lastUrl?' '+t.lastUrl:'')+' (mất vài chục giây). Địa chỉ chỉ được báo cho Worker sau khi thông.'+(t.restarts?' Đã chạy lại '+t.restarts+' lần'+(t.error?', lần gần nhất: '+t.error:'')+'.':'')));
+      else if(info.baseUrl)L.push(check('ok','Địa chỉ nhận tín hiệu: '+info.baseUrl));
       else L.push(check('warn','Đang tạo địa chỉ công khai (mất vài chục giây). Trong lúc này Server vẫn tự lấy tín hiệu từ Worker.'));
     }
     const g=info.gateway;

@@ -49,6 +49,8 @@ export class Runtime {
       if (cfg.publicUrl) sync.setPublicUrl(cfg.publicUrl)
       // Tunnel đang chạy từ trước: báo ngay địa chỉ hiện tại cho Server/Worker mới dựng.
       else if (this.tunnel) sync.setPublicUrl(this.tunnel.url())
+      // Không có địa chỉ công khai lẫn Quick Tunnel: báo "không có" để Worker bỏ địa chỉ cũ (nếu không nó cứ đẩy vào tunnel đã chết, HTTP 530).
+      else if (!needTunnel) sync.setPublicUrl(null)
     }
 
     if (needTunnel && !this.tunnel) {

@@ -3,6 +3,8 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { type App, createApp } from '../src/server/app'
 import { decodeConnectCode } from '../src/shared/connect'
+import { Runtime } from '../src/server/runtime'
+import { WorkerSync } from '../src/server/worker-sync'
 import { flushPending } from '../worker/src/deliver'
 import { type Env, handle } from '../worker/src/handler'
 import { SYNC_KEY, WEBHOOK_KEY, baseCfg, fakeD1 } from './helpers'
@@ -246,5 +248,101 @@ describe('Nút “Đo độ trễ” Worker → VPS', () => {
     const bob = (l.headers.get('set-cookie') ?? '').split(';')[0] as string
     expect((await probe(bob)).status).toBe(404)
     expect((await send('POST', `/api/servers/${sid}/probe`)).status).toBe(401)
+  })
+})
+
+describe('Tự chữa khi Worker giữ địa chỉ tunnel cũ/đã chết (HTTP 530)', () => {
+  const quiet = { debug() {}, info() {}, warn() {}, error() {} }
+  const codeOf = async () => decodeConnectCode((await j(await send('GET', `/api/servers/${sid}/code`, undefined, admin))).code as string)
+  const storedUrl = () => (env.DB.raw.prepare('SELECT url FROM servers WHERE id = ?').get(sid) as { url: string | null }).url
+  const mkSync = async (pollSec: number) => {
+    const code = await codeOf()
+    const toWorker = (async (input: string | URL | Request, init?: RequestInit) => call(String(input).slice(WORKER.length), init)) as typeof fetch
+    return new WorkerSync({ workerUrl: WORKER, syncKey: code?.key ?? '', serverId: sid, pollSec, log: quiet, ingest: app.ingestFromWorker, fetchFn: toWorker, clock: () => now })
+  }
+
+  it('Worker giữ địa chỉ chết, VPS có địa chỉ thật: lần kéo kế tiếp Server tự báo lại, không đợi 5 phút', async () => {
+    const sync = await mkSync(300)
+    sync.setPublicUrl(VPS)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(storedUrl()).toBe(VPS)
+    env.DB.raw.prepare("UPDATE servers SET url = 'https://chet.trycloudflare.com' WHERE id = ?").run(sid) // địa chỉ cũ đã chết
+    expect(await sync.pullOnce()).toBe(true)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(storedUrl()).toBe(VPS)
+  })
+
+  it('VPS không còn tunnel (desired = null) mà Worker vẫn giữ địa chỉ cũ: Server báo “không có” để Worker thôi đẩy vào tunnel chết', async () => {
+    const sync = await mkSync(300)
+    sync.setPublicUrl(null)
+    await new Promise((r) => setTimeout(r, 50))
+    env.DB.raw.prepare("UPDATE servers SET url = 'https://chet.trycloudflare.com' WHERE id = ?").run(sid)
+    await sync.pullOnce()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(storedUrl()).toBeNull()
+  })
+
+  it('Server không bật Quick Tunnel/địa chỉ công khai: Runtime báo null lên Worker thay vì để địa chỉ cũ nằm mãi', async () => {
+    const seen: (string | null)[] = []
+    const fake = { setPublicUrl: (u: string | null) => seen.push(u), tick: async () => true, start() {}, stop() {}, lastPollOk: 1, lastError: '' } as unknown as WorkerSync
+    const rt = new Runtime(baseCfg({ syncKey: 'k'.repeat(32), workerUrl: WORKER, serverId: sid, quickTunnel: false, publicUrl: '' }), { log: quiet, ingest: app.ingestFromWorker, makeSync: () => fake })
+    await rt.apply()
+    expect(seen).toEqual([null])
+  })
+
+  it('đẩy đang hụt → Worker gợi ý kéo mỗi 10 giây; khỏe lại thì thôi gợi ý; Server không bao giờ kéo thưa hơn cấu hình', async () => {
+    const pull = async () => j(await call('/api/pull', { headers: { authorization: `Bearer ${(await codeOf())?.key}`, 'x-ocean-server': sid } }))
+    expect((await pull()).poll).toBeUndefined() // có địa chỉ, chưa có lần đẩy hụt nào
+    serverSkew = 1000
+    await fire()
+    await settle() // đẩy hụt: bad_time
+    expect(await pull()).toMatchObject({ poll: 10, tunnel: VPS })
+    const sync = await mkSync(300)
+    await sync.pullOnce()
+    expect(sync.effectivePollSec()).toBe(10)
+    const fast = await mkSync(5)
+    await fast.pullOnce()
+    expect(fast.effectivePollSec()).toBe(5)
+    // khỏe lại
+    serverSkew = 0
+    now += 20
+    await fire()
+    await settle()
+    expect((await pull()).poll).toBeUndefined()
+    await sync.pullOnce()
+    expect(sync.effectivePollSec()).toBe(300)
+  })
+
+  it('Worker chưa có địa chỉ để đẩy → gợi ý kéo dày ngay', async () => {
+    await tunnel(null)
+    const r = await j(await call('/api/pull', { headers: { authorization: `Bearer ${(await codeOf())?.key}`, 'x-ocean-server': sid } }))
+    expect(r).toMatchObject({ poll: 10, tunnel: null })
+  })
+})
+
+describe('Server kéo dày khi tunnel rớt (không phụ thuộc Worker đã cập nhật hay chưa)', () => {
+  const quiet = { debug() {}, info() {}, warn() {}, error() {} }
+  it('mất địa chỉ công khai: kéo NGAY và chuyển sang nhịp 10 giây; có địa chỉ lại thì về chu kỳ cấu hình', async () => {
+    const code = decodeConnectCode((await j(await send('GET', `/api/servers/${sid}/code`, undefined, admin))).code as string)
+    let pulls = 0
+    const toWorker = (async (input: string | URL | Request, init?: RequestInit) => {
+      const u = String(input).slice(WORKER.length)
+      if (u === '/api/pull') pulls++
+      return call(u, init)
+    }) as typeof fetch
+    const sync = new WorkerSync({ workerUrl: WORKER, syncKey: code?.key ?? '', serverId: sid, pollSec: 300, log: quiet, ingest: app.ingestFromWorker, fetchFn: toWorker, clock: () => now })
+    sync.start(false) // nhịp đầu chờ cả chu kỳ: chỉ có thể kéo sớm nếu Server chủ động
+    sync.setPublicUrl(VPS)
+    await new Promise((r) => setTimeout(r, 60))
+    expect(sync.effectivePollSec()).toBe(300)
+    const before = pulls
+    sync.setPublicUrl(null) // tunnel rớt
+    await new Promise((r) => setTimeout(r, 100))
+    expect(pulls).toBeGreaterThan(before)
+    expect(sync.effectivePollSec()).toBe(10)
+    sync.setPublicUrl(VPS) // tunnel mới thông
+    await new Promise((r) => setTimeout(r, 60))
+    expect(sync.effectivePollSec()).toBe(300)
+    sync.stop()
   })
 })

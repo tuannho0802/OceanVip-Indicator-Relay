@@ -35,6 +35,11 @@ async function poll(){
     if(info&&info.worker){W.hidden=false;const ok=info.worker.lastPollAgoSec!==null&&!info.worker.error;
       W.textContent='Worker: '+(ok?'thông ('+ago2(info.worker.lastPollAgoSec)+')':(info.worker.error||'chưa thông'));W.className='pill '+(ok?'ok':'bad')}
     else W.hidden=true;
+    const TP=$('tunnel');
+    if(info&&info.tunnel){const t=info.tunnel;TP.hidden=false;
+      TP.textContent=t.state==='ok'?'Tunnel: thông':t.state==='down'?'Tunnel: đã rớt, đang tạo lại':'Tunnel: đang tạo…';
+      TP.className='pill '+(t.state==='ok'?'ok':t.state==='down'?'bad':'')}
+    else TP.hidden=true;
     const S=$('signals');S.replaceChildren(...(d.signals.length?d.signals.map(s=>signalCard(s,d.now)):[el('div','empty','Chưa có tín hiệu nào. Hãy gắn webhook vào alert TradingView.')]));
     const T=$('terms');T.replaceChildren(...(d.terminals.length?d.terminals.map(t=>termCard(t,d.now)):[el('div','empty','Chưa có EA nào kết nối Gateway.')]));
     if(window.onData)window.onData(info,d);

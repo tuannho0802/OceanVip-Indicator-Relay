@@ -18,6 +18,8 @@ export type WorkerSyncOptions = {
 }
 
 const MAX_RAW = 16 * 1024
+/** Chu kỳ kéo (giây) khi Worker không có địa chỉ để đẩy tới. */
+const NO_PUSH_POLL_SEC = 10
 
 /**
  * Server (VPS) là bên chủ động gọi Worker, không phải EA: EA chỉ nói chuyện với Gateway/Server nên không tốn
@@ -38,6 +40,10 @@ export class WorkerSync {
   private desiredUrl: string | null | undefined = undefined
     private reportedUrl: string | null | undefined = undefined
     private running = false
+    /** Worker gợi ý kéo dày hơn (giây) khi đường đẩy đang hụt; null = theo cấu hình. */
+    private hintSec: number | null = null
+    /** Chạy một nhịp ngay (đặt khi start): dùng để kéo liền khi vừa mất địa chỉ công khai. */
+    private runTick: (() => Promise<void>) | null = null
 
     constructor(private readonly o: WorkerSyncOptions) { }
 
@@ -67,26 +73,41 @@ export class WorkerSync {
             }
             if (this.stopped) return
             // Lỗi thì thử lại thưa hơn một chút để không dồn request vào Worker đang trục trặc (không bao giờ dày hơn chu kỳ thường).
-            const wait = ok ? this.o.pollSec : Math.max(this.o.pollSec, Math.min(this.o.pollSec * 2, 120))
+            const wait = ok ? this.effectivePollSec() : Math.max(this.o.pollSec, Math.min(this.o.pollSec * 2, 120))
             this.timer = setTimeout(() => void tick(), wait * 1000)
             this.timer.unref()
         }
+        this.runTick = tick
         if (immediate) void tick()
         else {
-            this.timer = setTimeout(() => void tick(), this.o.pollSec * 1000)
+            this.timer = setTimeout(() => void tick(), this.effectivePollSec() * 1000)
             this.timer.unref()
         }
     }
 
+    /** Chu kỳ kéo đang dùng: cấu hình, hoặc dày hơn nếu Worker gợi ý (không bao giờ thưa hơn cấu hình). */
+    effectivePollSec(): number {
+        // Không có địa chỉ công khai (tunnel đang tạo/đã rớt) thì Worker không đẩy được: kéo là đường duy nhất nên kéo dày, không đợi Worker gợi ý.
+        const noPush = this.desiredUrl === null ? NO_PUSH_POLL_SEC : null
+        return Math.min(this.o.pollSec, this.hintSec ?? this.o.pollSec, noPush ?? this.o.pollSec)
+    }
+
     stop(): void {
         this.stopped = true
+        this.runTick = null
         if (this.timer) clearTimeout(this.timer)
     }
 
     /** Địa chỉ VPS mà Worker nên đẩy tới (null = chưa có/đã rớt). Gửi ngay, và tự gửi lại ở các nhịp sau nếu lỗi. */
     setPublicUrl(url: string | null): void {
+        const lost = url === null && this.desiredUrl !== null && this.desiredUrl !== undefined
         this.desiredUrl = url
         if (this.stopped) return
+        // Vừa mất địa chỉ công khai (tunnel rớt): kéo ngay và chuyển sang nhịp dày, đừng đợi nốt chu kỳ 300 giây đang chờ.
+        if (lost && this.runTick && !this.running) {
+            if (this.timer) clearTimeout(this.timer)
+            void this.runTick()
+        }
         // Vừa báo xong địa chỉ mới thì kéo bù một lần: tín hiệu bắn trong lúc tunnel đổi địa chỉ đang nằm chờ ở Worker.
         void this.reportUrl().then((changed) => (changed && url !== null ? this.catchUp() : undefined)).catch(() => { })
     }
@@ -153,15 +174,25 @@ export class WorkerSync {
             this.o.log.warn(`worker: ${this.lastError}`)
             return false
         }
-        let data: { items?: unknown }
+        let data: { items?: unknown; tunnel?: unknown; poll?: unknown }
         try {
-            data = (await res.json()) as { items?: unknown }
+            data = (await res.json()) as { items?: unknown; tunnel?: unknown; poll?: unknown }
         } catch {
             this.lastError = 'Worker trả dữ liệu không đọc được'
             return false
         }
         this.lastPollOk = this.now
         this.lastError = ''
+        this.hintSec = typeof data.poll === 'number' && Number.isInteger(data.poll) && data.poll >= 2 && data.poll <= 600 ? data.poll : null
+        // Worker đang giữ địa chỉ khác địa chỉ thật của VPS (đã đổi, đã chết, hoặc VPS không còn tunnel): báo lại ngay, không đợi nhịp sau.
+        if ('tunnel' in data && this.desiredUrl !== undefined) {
+            const held = typeof data.tunnel === 'string' ? data.tunnel.toLowerCase() : null
+            const want = this.desiredUrl === null ? null : this.desiredUrl.replace(/\/+$/, '').toLowerCase()
+            if (held !== want) {
+                this.reportedUrl = undefined
+                void this.reportUrl().catch((e) => this.o.log.warn(`worker: ${String((e as Error).message ?? e).slice(0, 160)}`))
+            }
+        }
         const items = Array.isArray(data.items) ? data.items : []
         const done: number[] = []
         for (const it of items.slice(0, 100) as Partial<WorkerItem>[]) {

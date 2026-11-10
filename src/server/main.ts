@@ -67,6 +67,7 @@ let runtime: Runtime | null = null
 const app = createApp(cfg, {
   log,
   tunnelUrl: () => runtime?.tunnel?.url() ?? null,
+  tunnelStatus: () => runtime?.tunnel?.status() ?? null,
   workerStatus: () => ({ lastPollOk: runtime?.sync?.lastPollOk ?? 0, lastError: runtime?.sync?.lastError ?? '', pulled: runtime?.sync?.pulled ?? 0 }),
   setup: new SetupController({ cfg, env: process.env, log, apply: () => (runtime ? runtime.apply() : Promise.resolve(null)) }),
 })

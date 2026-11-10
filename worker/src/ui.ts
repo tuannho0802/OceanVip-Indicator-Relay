@@ -241,6 +241,7 @@ const CLIENT_JS = String.raw`
     if (status === 401) return 'Server từ chối chữ ký (lệch giờ hoặc sai khóa), HTTP 401'
     if (status === 403) return 'Server từ chối (HTTP 403)'
     if (status === 404) return 'địa chỉ tunnel cũ hoặc Server bản quá cũ (HTTP 404)'
+    if (status === 530 || status === 1033) return 'Cloudflare báo tunnel này không còn chạy (HTTP 530): địa chỉ Worker đang giữ đã chết. Trên VPS, cloudflared không chạy hoặc đã đổi địa chỉ; Server sẽ tự báo lại địa chỉ mới ở lần kéo kế tiếp, hoặc mở trang Cài đặt trên VPS và bấm Lưu để chạy lại tunnel'
     if (status && status >= 500) return 'tunnel không thông tới VPS (HTTP ' + status + ')'
     return e || 'lỗi không rõ'
   }
@@ -263,6 +264,7 @@ const CLIENT_JS = String.raw`
       var q = r.avg < 600 ? 'Tốt' : (r.avg < 2000 ? 'Chậm' : 'Rất chậm')
       add(box, h('div', { text: q + ' · Worker → VPS: ' + r.received + '/' + r.sent + ' lần thành công · nhanh nhất ' + r.min + ' ms · trung bình ' + r.avg + ' ms · chậm nhất ' + r.max + ' ms' + (r.first !== null ? ' · lần đầu ' + r.first + ' ms' : '') }))
     }
+    if (r.origin) add(box, h('div', { class: 'mono', text: 'Địa chỉ Worker đang đẩy tới: ' + r.origin }))
     add(box, h('div', { class: 'mono', text: 'Từng lần: ' + r.samples.map(function (x) { return x.error ? (x.ms !== null ? x.error + ' ' + x.ms + 'ms' : x.error) : x.ms + 'ms' }).join(' · ') }))
     if (r.skew !== null) add(box, h('div', { class: Math.abs(r.skew) > 120 ? 'warn' : 'muted', text: 'Giờ VPS so với Worker: ' + (r.skew > 0 ? '+' : '') + r.skew + ' giây' + (Math.abs(r.skew) > 120 ? ' (lệch nhiều: nguy cơ bị từ chối chữ ký khi quá 300 giây, hãy đồng bộ giờ Windows)' : '') }))
     if (!r.verified) add(box, h('div', { class: 'muted', text: 'VPS dùng Server bản cũ (chưa có /api/ping): mới đo được kết nối, chưa kiểm khóa và giờ. Hãy cập nhật Server lên bản mới.' }))
