@@ -10,7 +10,7 @@
 Công tắc & Algo Trading → tuổi (`InpMaxAgeSec`) → symbol → lệch giá (`InpMaxDevPoints`) → SL/TP đúng phía theo giá thật → stops level → tổng lot (`InpMaxTotalLots`) → **ghi id vào Global Variable** → gửi lệnh. Mỗi nhánh chặn trả mã ack riêng (xem [PROTOCOL.md](../PROTOCOL.md)).
 
 ## Bảo mật
-EA chỉ nói chuyện với Gateway cục bộ, không giữ khóa nào; chữ ký do Gateway kiểm. Lệnh mang `InpMagic` và comment `OCEAN#<id>/TPn`. Id đã xử lý nằm ở Global Variable `OCEAN_<login>_<id>` nên khởi động lại không mở lệnh lần hai.
+EA chỉ nói chuyện với Gateway cục bộ, không giữ khóa nào; chữ ký do Gateway kiểm. Lệnh mang `InpMagic` và comment `OCEAN#<số>/TPn`, trong đó `<số>` là số thứ tự lệnh **trong ngày** (giờ server broker): sang ngày mới đếm lại từ 1 (bộ đếm lưu ở Global Variable `OCEANSEQ_<login>`, khởi động lại EA vẫn đếm tiếp đúng). Id đã xử lý nằm ở Global Variable `OCEAN_<login>_<id>` nên khởi động lại không mở lệnh lần hai.
 
 ## Chưa làm
 Khuôn cập nhật `U|…` chỉ ghi nhận (chưa biết các giá trị `closeStatus`); cần mẫu thật rồi mới dời SL/đóng lệnh.
@@ -27,4 +27,4 @@ Khi lệnh **TP1** (hoặc **TP2**) của một tín hiệu chốt lời, EA d�
 | `InpBEUnit` | `BE_UNIT_PRICE` | `BE_UNIT_PRICE`: theo giá (XAUUSD 3.0 = 3 USD). `BE_UNIT_PIPS`: 1 pip = 10 point |
 | `InpBELockProfit` | false | false: SL phía lỗ (BUY: Entry−N, SELL: Entry+N). true: khóa lãi (BUY: Entry+N, SELL: Entry−N) |
 
-Quy tắc: chỉ kích hoạt khi lệnh trigger **đóng do chạm TP** (đóng do SL/tay thì bỏ qua); chỉ dời SL theo hướng có lợi, không bao giờ nới SL; mỗi tín hiệu làm một lần (Global Variable `OCEANBE_<login>_<id>`, khởi động lại không làm lại); SL mới phải cách giá thị trường tối thiểu stops level, nếu chưa hợp lệ EA thử lại mỗi giây tối đa 300 lần; cần tài khoản hedging; không tác dụng khi `InpTP3Only=true`. Chưa biên dịch/chạy trên MT5 thật — thử trên DEMO.
+Quy tắc: chỉ kích hoạt khi lệnh trigger **đóng do chạm TP** (đóng do SL/tay thì bỏ qua); chỉ dời SL theo hướng có lợi, không bao giờ nới SL; mỗi tín hiệu làm một lần (Global Variable `OCEANBE_<login>_<ngày×10000+số>`, khởi động lại không làm lại; khóa có kèm ngày nên số thứ tự trùng giữa các ngày không bị nhầm); SL mới phải cách giá thị trường tối thiểu stops level, nếu chưa hợp lệ EA thử lại mỗi giây tối đa 300 lần; cần tài khoản hedging; không tác dụng khi `InpTP3Only=true`. Chưa biên dịch/chạy trên MT5 thật — thử trên DEMO.
