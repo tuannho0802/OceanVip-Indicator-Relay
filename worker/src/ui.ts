@@ -43,7 +43,7 @@ const CLIENT_JS = String.raw`
 (function () {
   'use strict'
   var root = document.getElementById('root')
-  var S = { loaded: false, tab: 'conn', user: null, setup: 'ok', notice: '', ov: null, sigs: null, codes: {}, secret: null }
+  var S = { loaded: false, tab: 'conn', user: null, setup: 'ok', notice: '', ov: null, sigs: null, ret: null, codes: {}, secret: null }
   var toastTimer = 0
 
   function add(e, c) {
@@ -122,11 +122,15 @@ const CLIENT_JS = String.raw`
   function call(method, path, body, okMsg) {
     return api(method, path, body).then(function (r) { if (okMsg) toast(okMsg); return r }).catch(function (e) { fail(e); return null })
   }
+  /** Tải danh sách tín hiệu và thông tin dọn dẹp (số lượng, cấu hình tự dọn) của tab Tín hiệu. */
+  function loadSigs() {
+    return Promise.all([api('GET', '/api/signals'), api('GET', '/api/signals/retention')]).then(function (r) { S.sigs = r[0]; S.ret = r[1] })
+  }
   function refresh() {
     return api('GET', '/api/overview').then(function (o) {
       S.ov = o
       S.user = o.user
-      return S.tab === 'sigs' ? api('GET', '/api/signals').then(function (s) { S.sigs = s }) : null
+      return S.tab === 'sigs' ? loadSigs() : null
     }).then(render).catch(fail)
   }
 
@@ -352,9 +356,38 @@ const CLIENT_JS = String.raw`
     return out
   }
 
+  /** Thẻ dọn dẹp: Admin chọn thời gian tự dọn mỗi ngày; ai cũng xóa tay được (Admin: của mọi người, User: của mình). */
+  function cleanupCard() {
+    var admin = S.user.role === 'admin'
+    var r = S.ret
+    var card = h('div', { class: 'card' }, h('h3', { text: 'Dọn dẹp tín hiệu' }))
+    if (!r) return add(card, h('p', { class: 'muted', text: 'Đang tải…' })) || card
+    add(card, h('p', { class: 'muted', text: 'Đang lưu ' + r.count + ' tín hiệu' + (r.oldest_age !== null ? ', cũ nhất ' + ago(r.oldest_age) : '') + (admin ? ' (của mọi người).' : ' (của bạn).') }))
+    if (admin) {
+      var d = r.days
+      var preset = d === 0 ? 'off' : (d === 7 || d === 30 || d === 90) ? String(d) : 'custom'
+      var sel = h('select', { name: 'preset' }, [['off', 'Không tự xóa'], ['7', '7 ngày gần nhất'], ['30', '1 tháng gần nhất'], ['90', '3 tháng gần nhất'], ['custom', 'Tùy chọn (số ngày bên cạnh)']].map(function (o) { return h('option', { value: o[0], text: o[1] }) }))
+      sel.value = preset
+      add(card, h('form', { class: 'row', 'data-form': 'retention' },
+        h('label', null, 'Tự động giữ lại', sel),
+        h('label', null, 'Số ngày tùy chọn', h('input', { class: 'num', name: 'custom', type: 'number', min: '1', max: '3650', value: preset === 'custom' ? String(d) : '' })),
+        h('button', { class: 'pri', type: 'submit', text: 'Lưu' })))
+      add(card, h('p', { class: 'muted', text: 'Worker tự dọn mỗi ngày lúc 03:00 (giờ Việt Nam)' + (r.last ? '. Lần dọn gần nhất ' + ago(r.last.ago) + ', đã xóa ' + r.last.deleted + ' tín hiệu.' : '. Chưa chạy lần nào.') }))
+    }
+    var keep = function (days, label) { return h('button', { 'data-act': 'purgeOlder', 'data-days': days, text: label }) }
+    add(card, h('div', { class: 'row' }, h('span', { class: 'muted', text: 'Xóa ngay:' }), keep(7, 'Giữ 7 ngày gần nhất'), keep(30, 'Giữ 1 tháng gần nhất'), keep(90, 'Giữ 3 tháng gần nhất'), h('button', { class: 'dng', 'data-act': 'purgeAll', text: 'Xóa hết' })))
+    add(card, h('form', { class: 'row', 'data-form': 'purgeRange' },
+      h('label', null, 'Xóa từ ngày', h('input', { name: 'from', type: 'date', required: true })),
+      h('label', null, 'đến hết ngày', h('input', { name: 'to', type: 'date', required: true })),
+      h('button', { class: 'dng', type: 'submit', text: 'Xóa khoảng này' })))
+    add(card, h('p', { class: 'muted', text: 'Tín hiệu vừa nhận mà VPS chưa kịp nhận sẽ được giữ lại để không mất lệnh.' }))
+    return card
+  }
+
   function sigsView() {
     var out = h('div', null, h('h2', { text: 'Tín hiệu gần đây' }),
       h('div', { class: 'row' }, h('button', { 'data-act': 'reloadSigs', text: 'Tải lại' }), h('span', { class: 'muted', text: S.user.role === 'admin' ? 'Admin thấy của mọi người.' : 'Chỉ hiện tín hiệu đi qua Webhook của bạn.' })))
+    add(out, cleanupCard())
     if (!S.sigs) return add(out, h('p', { class: 'muted', text: 'Đang tải…' })) || out
     if (S.sigs.signals.length === 0) add(out, h('p', { class: 'muted', text: 'Chưa có tín hiệu nào. Dùng nút “Gửi thử” ở tab Kết nối để kiểm tra đường đi.' }))
     S.sigs.signals.forEach(function (g) {
@@ -413,18 +446,34 @@ const CLIENT_JS = String.raw`
   function showServerSecret(r, title) {
     S.secret = { title: title, lines: [['Mã kết nối', r.code]], note: 'Dán mã này vào trang Cài đặt TRÊN VPS (http://127.0.0.1:8090/#setup). Mã chứa khóa riêng của VPS, không gửi công khai.' }
   }
+  function doPurge(body) {
+    call('POST', '/api/signals/purge', body).then(function (r) {
+      if (!r) return
+      toast('Đã xóa ' + r.deleted + ' tín hiệu' + (r.kept_pending ? ' (giữ lại ' + r.kept_pending + ' tín hiệu đang chờ giao)' : ''))
+      return loadSigs().then(render)
+    }).catch(fail)
+  }
   var acts = {
     tab: function (t) {
       S.tab = t.getAttribute('data-v')
       S.secret = null
-      if (S.tab === 'sigs') api('GET', '/api/signals').then(function (s) { S.sigs = s; render() }).catch(fail)
+      if (S.tab === 'sigs') loadSigs().then(render).catch(fail)
       else if (S.tab === 'conn' || S.tab === 'users') refresh()
       render()
     },
     logout: function () { call('POST', '/api/logout').then(function () { S.user = null; S.ov = null; S.sigs = null; S.codes = {}; S.secret = null; S.notice = ''; render() }) },
     copyText: function (t) { copy(t.getAttribute('data-v')) },
     closeSecret: function () { S.secret = null; render() },
-    reloadSigs: function () { api('GET', '/api/signals').then(function (s) { S.sigs = s; render() }).catch(fail) },
+    reloadSigs: function () { loadSigs().then(render).catch(fail) },
+    purgeOlder: function (t) {
+      var days = Number(t.getAttribute('data-days'))
+      if (!window.confirm('Xóa các tín hiệu cũ hơn ' + days + ' ngày? Không hoàn tác được.')) return
+      doPurge({ mode: 'older', days: days })
+    },
+    purgeAll: function () {
+      if (!window.confirm('Xóa HẾT tín hiệu' + (S.user.role === 'admin' ? ' của mọi người' : ' của bạn') + '? Không hoàn tác được.')) return
+      doPurge({ mode: 'all' })
+    },
     getCode: function (t) {
       var id = t.getAttribute('data-id')
       call('GET', '/api/servers/' + id + '/code').then(function (r) { if (r) { S.codes[id] = r.code; render() } })
@@ -485,6 +534,22 @@ const CLIENT_JS = String.raw`
     }
   }
   var forms = {
+    retention: function (f) {
+      var p = val(f, 'preset')
+      var days = p === 'off' ? 0 : p === 'custom' ? Number(val(f, 'custom')) : Number(p)
+      if (!Number.isInteger(days) || days < 0 || days > 3650 || (p === 'custom' && days < 1)) return toast('Số ngày tùy chọn phải từ 1 đến 3650', true)
+      call('PUT', '/api/signals/retention', { days: days }, days === 0 ? 'Đã tắt tự xóa' : 'Đã lưu: tự giữ ' + days + ' ngày gần nhất').then(function (r) { if (r) return loadSigs().then(render) })
+    },
+    purgeRange: function (f) {
+      var a = val(f, 'from')
+      var b = val(f, 'to')
+      if (!a || !b) return toast('Chọn đủ ngày bắt đầu và ngày kết thúc', true)
+      var from = Math.floor(new Date(a + 'T00:00:00').getTime() / 1000)
+      var to = Math.floor(new Date(b + 'T23:59:59').getTime() / 1000)
+      if (!(from <= to)) return toast('Ngày bắt đầu phải trước ngày kết thúc', true)
+      if (!window.confirm('Xóa các tín hiệu từ ' + a + ' đến hết ' + b + '? Không hoàn tác được.')) return
+      doPurge({ mode: 'range', from: from, to: to })
+    },
     login: function (f) {
       api('POST', '/api/login', { username: val(f, 'username'), password: val(f, 'password') }).then(function (r) {
         S.notice = ''

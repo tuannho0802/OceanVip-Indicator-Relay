@@ -3,6 +3,7 @@ import { COOKIE, SESSION_SEC, burnPassword, hashPassword, passwordProblem, rando
 import { ONLINE_SEC, hookTargets, normalizeOrigin, storeAndDeliver } from './deliver'
 import type { Ctx, Env } from './handler'
 import { json } from './http'
+import { MAX_RETENTION_DAYS, getRetentionDays, lastRun, purge, setRetentionDays, stats } from './retention'
 
 /**
  * API quản lý (JSON) cho trang web của Worker. KHÔNG có đăng ký: Admin tạo tài khoản, User tự đổi mật khẩu sau khi được cấp.
@@ -273,6 +274,41 @@ export async function appRoute(req: Request, env: Env, ctx: Ctx, url: URL, deps:
   if (u.must_change === 1) return err(403, 'must_change_password', 'Hãy đổi mật khẩu trước khi dùng tiếp')
 
   if (head === 'overview' && m === 'GET') return overview(env, u, workerUrl, now)
+
+  // ---- Dọn tín hiệu: cấu hình tự dọn (chỉ Admin đổi) và xóa thủ công (Admin: của mọi người; User: của mình) ----
+  if (head === 'signals' && parts[2] === 'retention') {
+    if (m === 'GET') {
+      const [days, s, last] = await Promise.all([getRetentionDays(env), stats(env, now, admin ? undefined : u.id), lastRun(env)])
+      return json(200, { now, days, count: s.count, oldest_age: s.oldest_age, last: last ? { ago: Math.max(0, now - last.at), deleted: last.deleted } : null })
+    }
+    if (m === 'PUT') {
+      if (!admin) return err(403, 'forbidden', 'Chỉ Admin được đổi thời gian tự dọn')
+      const b = await readBody(req)
+      const days = int(b?.days, 0, MAX_RETENTION_DAYS)
+      if (days === null) return err(400, 'bad_days', `Số ngày phải từ 0 (không tự xóa) đến ${MAX_RETENTION_DAYS}`)
+      await setRetentionDays(env, days)
+      return json(200, { ok: true, days })
+    }
+    return err(405, 'method_not_allowed', 'Phương thức không hợp lệ')
+  }
+  if (head === 'signals' && parts[2] === 'purge') {
+    if (m !== 'POST') return err(405, 'method_not_allowed', 'Phương thức không hợp lệ')
+    const b = await readBody(req)
+    const mode = b?.mode
+    let spec: Parameters<typeof purge>[2] | null = null
+    if (mode === 'all') spec = { kind: 'all' }
+    else if (mode === 'older') {
+      const days = int(b?.days, 1, MAX_RETENTION_DAYS)
+      if (days !== null) spec = { kind: 'older', days }
+    } else if (mode === 'range') {
+      const from = int(b?.from, 0, 4_102_444_800)
+      const to = int(b?.to, 0, 4_102_444_800)
+      if (from !== null && to !== null && from <= to) spec = { kind: 'range', from, to }
+    }
+    if (!spec) return err(400, 'bad_request', 'Yêu cầu xóa không hợp lệ (mode: older + days, range + from/to, hoặc all)')
+    const r = await purge(env, now, spec, admin ? undefined : u.id)
+    return json(200, { ok: true, ...r })
+  }
 
   // ---- Tín hiệu gần đây (User: của mình; Admin: tất cả) ----
   if (head === 'signals' && m === 'GET') {

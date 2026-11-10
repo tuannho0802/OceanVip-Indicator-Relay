@@ -52,7 +52,6 @@ export type Ctx = { waitUntil(p: Promise<unknown>): void }
 const MAX_BODY = 16 * 1024
 const PULL_WINDOW_SEC = 3600
 const SEEN_EVERY_SEC = 60
-const KEEP_SEC = 7 * 86400
 
 const bearer = (req: Request): string => {
   const h = req.headers.get('authorization') ?? ''
@@ -141,11 +140,7 @@ async function route(req: Request, env: Env, ctx: Ctx, deps: Deps): Promise<Resp
     const id = await storeAndDeliver(env, ctx, fetchFn, { raw, owner: hook?.owner ?? null, hook: hook?.id ?? null, targets, now, retryMs: deps.retryMs })
     if (id === null) return json(500, { error: 'store_failed' })
     if (hook) ctx.waitUntil(env.DB.prepare('UPDATE hooks SET last_used = ?, hits = hits + 1 WHERE id = ?').bind(now, hook.id).run())
-    // Dọn tín hiệu cũ thỉnh thoảng (không cần cron): mỗi ~1/50 lần nhận.
-    if (id % 50 === 0) {
-      ctx.waitUntil(env.DB.prepare('DELETE FROM deliveries WHERE sid IN (SELECT id FROM signals WHERE created < ?)').bind(now - KEEP_SEC).run())
-      ctx.waitUntil(env.DB.prepare('DELETE FROM signals WHERE created < ?').bind(now - KEEP_SEC).run())
-    }
+    // Dọn tín hiệu cũ do Cron Trigger mỗi ngày làm (retention.ts), theo số ngày Admin chọn ở tab Tín hiệu.
     return json(200, { ok: true, id, servers: targets.length, ...(targets.length === 0 ? { warning: 'no_active_server', message: 'Đã nhận alert nhưng chưa có VPS nào đang hoạt động để giao' } : {}) })
   }
 
