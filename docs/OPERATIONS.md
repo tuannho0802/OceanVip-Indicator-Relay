@@ -18,6 +18,7 @@
 | Ack `price_dev` / `too_old` | Giá đã chạy / tín hiệu cũ | Chỉnh `InpMaxDevPoints`, `InpMaxAgeSec` (cân nhắc rủi ro) |
 | Ack `no_symbol` | Tên symbol sàn khác TradingView | Đặt `OCEAN_SYMBOL_MAP` ở Gateway |
 | Server "cổng đang bị chiếm" | Chương trình khác dùng cổng Server | Đổi `OCEAN_PORT` (cổng Gateway: xem hai dòng trên) |
+| Tín hiệu tới trễ hoặc hiện “Quá hạn, không giao cho EA” | Worker → VPS đẩy hụt (tunnel chập chờn, lệch giờ VPS > 300 giây, sai khóa) nên tín hiệu phải chờ Cron quét lại (≤ 1 phút) hoặc kéo bù (`OCEAN_POLL_SEC`) | Trang Worker → thẻ VPS: bấm **Đo độ trễ** (hiện min/TB/max, giờ lệch, xác thực khóa) và xem dòng **Lần đẩy gần nhất** (`bad_time` = lệch giờ, `timeout`/`network` = tunnel). Sửa giờ Windows (`w32tm /resync`) hoặc dùng Named Tunnel + `OCEAN_PUBLIC_URL` |
 | Tín hiệu chỉ tới sau vài chục giây | Worker chưa biết địa chỉ VPS (Quick Tunnel mới) → đi đường kéo bù | Bình thường (Quick Tunnel mới báo địa chỉ xong là kéo bù ngay); chỉ giảm `OCEAN_POLL_SEC` nếu thật cần, mỗi lần giảm là tốn thêm request Worker |
 
 ## MT4 (cổng 80)

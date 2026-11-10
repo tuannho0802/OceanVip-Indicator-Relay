@@ -27,7 +27,8 @@ TradingView ──POST /webhook?key=…──► Worker (D1) ──push ký HMAC
 1. TradingView POST body text vào `/webhook?key=…` của Worker.
 2. Worker lưu D1 (`pushed=0`) → trả `{ok,id}` → (nền) đẩy `POST {vps}/api/ingest` ký `HMAC(SYNC_KEY, "ts.body")`.
 3. Server kiểm chữ ký + độ lệch giờ, đọc hiểu, chống trùng theo `wid` và khóa `symbol|tf|side|entry`, lưu với `src='worker'`, `received_at` = giờ Worker nhận.
-4. Worker đánh dấu `pushed=1` khi VPS trả 2xx. Lỗi mạng/timeout/5xx thì Worker thử lại ngay (sau 1,5 giây và 4 giây). Nếu vẫn hụt, Server kéo `/api/pull` ở nhịp `OCEAN_POLL_SEC` kế tiếp (hoặc ngay khi báo địa chỉ tunnel mới) rồi `/api/ack`.
+4. Worker đánh dấu `pushed=1` khi VPS trả 2xx. Lỗi mạng/timeout/5xx/404/429 thì Worker thử lại tối đa 6 lần (chờ 0, 1, 2, 4, 6, 8 giây, trong ngân sách ~26 giây của `waitUntil`); 401/403 (sai khóa, lệch giờ) là lỗi vĩnh viễn nên dừng ngay. Kết quả lần đẩy gần nhất (số lần, mã lỗi như `bad_time`) được lưu ở `kv` (`push:<id>`) và hiện trên thẻ VPS.
+   Nếu vẫn hụt, **Worker tự quét lại mỗi phút** bằng Cron (`flushPending`: tín hiệu chưa giao, tuổi 20–170 giây, tối đa 8 lượt/phút). Cuối cùng mới tới đường kéo bù: Server kéo `/api/pull` ở nhịp `OCEAN_POLL_SEC` (hoặc ngay khi báo địa chỉ tunnel mới) rồi `/api/ack`.
 5. EA ping Gateway mỗi 2 giây → Gateway ping Server → Server trả các tín hiệu chưa giao, còn hạn (`OCEAN_MAX_AGE_SEC`), kèm chữ ký.
 6. Gateway kiểm chữ ký, lọc khung giờ, ánh xạ symbol → dòng `S|…` → EA kiểm lần cuối (tuổi, lệch giá, phía SL/TP, stops level, tổng lot) rồi mở lệnh và ack kết quả.
 

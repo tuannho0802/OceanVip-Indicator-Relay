@@ -11,10 +11,11 @@ afterEach(() => {
 })
 
 /** Mở trang quản lý thật của Worker trong jsdom; fetch của trang được nối thẳng vào mã Worker (kèm cookie như trình duyệt). */
-async function open(env: Env) {
+async function open(env: Env, fetchFn?: typeof fetch) {
     const pending: Promise<unknown>[] = []
     const ctx = { waitUntil: (p: Promise<unknown>) => void pending.push(p) }
-    const res = await handle(new Request(`${WORKER}/`), env, ctx)
+    const deps = fetchFn ? { fetchFn } : {}
+    const res = await handle(new Request(`${WORKER}/`), env, ctx, deps)
     expect(res.status).toBe(200)
     const page = await res.text()
     const script = /<script nonce="[^"]+">([\s\S]*)<\/script>/.exec(page)?.[1] ?? ''
@@ -24,7 +25,7 @@ async function open(env: Env) {
     let cookie = ''
     w.confirm = () => true
     w.fetch = (async (u: string, o: RequestInit = {}) => {
-        const r = await handle(new Request(`${WORKER}${u}`, { ...o, headers: { ...(o.headers as object), origin: WORKER, ...(cookie ? { cookie } : {}) } }), env, ctx)
+        const r = await handle(new Request(`${WORKER}${u}`, { ...o, headers: { ...(o.headers as object), origin: WORKER, ...(cookie ? { cookie } : {}) } }), env, ctx, deps)
         const sc = r.headers.get('set-cookie')
         if (sc) cookie = sc.split(';')[0] ?? ''
         if (sc && /Max-Age=0/.test(sc)) cookie = ''
@@ -215,4 +216,79 @@ describe('mọi thao tác làm được trên UI Worker, không màn hình nào 
     await p.until(() => p.text().includes('ADMIN_PASSWORD'), 'hướng dẫn')
     expect(p.text()).not.toMatch(CLI)
   })
+
+    /** Admin đăng nhập, đổi mật khẩu, tạo một VPS rồi (tùy chọn) gán địa chỉ tunnel giả cho VPS đó. */
+    async function adminWithServer(env: ReturnType<typeof fresh>, fetchFn: typeof fetch, tunnelUrl: string | null) {
+        const a = await open(env, fetchFn)
+        await a.until(() => !!a.form('login'), 'form đăng nhập')
+        a.fill(a.form('login'), { username: 'admin', password: 'admin-initial-pass' })
+        a.submit(a.form('login'))
+        await a.until(() => !!a.form('password'), 'đổi mật khẩu')
+        a.fill(a.form('password'), { current: 'admin-initial-pass', next: 'admin-real-pass-9', again: 'admin-real-pass-9' })
+        a.submit(a.form('password'))
+        await a.until(() => !!a.form('addServer'), 'dashboard')
+        a.fill(a.form('addServer'), { name: 'VPS đo' })
+        a.submit(a.form('addServer'))
+        await a.until(() => a.text().includes('Chưa kết nối'), 'thẻ VPS')
+        if (tunnelUrl) env.DB.raw.prepare('UPDATE servers SET url = ?').run(tunnelUrl)
+        return a
+    }
+
+    it('nút “Đo độ trễ” ở thẻ VPS: bấm là Worker đo tới VPS và hiện nhanh nhất/trung bình/chậm nhất, giờ lệch', async () => {
+        const env = fresh()
+        const vps = (async (input: string | URL | Request) => {
+            expect(String(input)).toBe('https://vps.example.trycloudflare.com/api/ping')
+            await new Promise((r) => setTimeout(r, 3))
+            return new Response(JSON.stringify({ ok: true, now: Math.floor(Date.now() / 1000) + 2 }), { status: 200 })
+        }) as typeof fetch
+        const a = await adminWithServer(env, vps, 'https://vps.example.trycloudflare.com')
+        a.click('button[data-act="probeServer"]')
+        await a.until(() => a.text().includes('nhanh nhất'), 'kết quả đo')
+        expect(a.text()).toContain('5/5 lần thành công')
+        expect(a.text()).toContain('trung bình')
+        expect(a.text()).toContain('chậm nhất')
+        expect(a.text()).toContain('Giờ VPS so với Worker: +2 giây')
+        expect(a.text()).toContain('Từng lần:')
+        expect((a.doc.querySelector('button[data-act="probeServer"]') as HTMLButtonElement).disabled).toBe(false)
+    })
+
+    it('đo thất bại: giải thích bằng tiếng Việt (lệch giờ / tunnel sập / chưa có địa chỉ)', async () => {
+        // lệch giờ: Server trả 401 bad_time
+        const skewed = (async () => new Response('{"error":"bad_time"}', { status: 401 })) as typeof fetch
+        const a = await adminWithServer(fresh(), skewed, 'https://vps.example.trycloudflare.com')
+        a.click('button[data-act="probeServer"]')
+        await a.until(() => a.text().includes('KHÔNG gọi được VPS'), 'kết quả lệch giờ')
+        expect(a.text()).toContain('lệch giờ quá 5 phút')
+        expect(a.text()).toContain('w32tm /resync')
+
+        // tunnel sập
+        const down = (async () => {
+            throw new Error('x')
+        }) as typeof fetch
+        const b = await adminWithServer(fresh(), down, 'https://vps.example.trycloudflare.com')
+        b.click('button[data-act="probeServer"]')
+        await b.until(() => b.text().includes('KHÔNG gọi được VPS'), 'kết quả tunnel sập')
+        expect(b.text()).toContain('không nối được tới địa chỉ tunnel')
+
+        // chưa có địa chỉ tunnel
+        const c = await adminWithServer(fresh(), down, null)
+        c.click('button[data-act="probeServer"]')
+        await c.until(() => c.text().includes('Không đo được'), 'kết quả no_url')
+        expect(c.text()).toContain('chưa báo địa chỉ tunnel')
+    })
+
+    it('thẻ VPS hiện “Lần đẩy gần nhất” và lý do khi đẩy hụt', async () => {
+        const env = fresh()
+        const skewed = (async () => new Response('{"error":"bad_time"}', { status: 401 })) as typeof fetch
+        const a = await adminWithServer(env, skewed, 'https://vps.example.trycloudflare.com')
+        a.fill(a.form('addHook'), { name: 'tv' })
+        a.submit(a.form('addHook'))
+        await a.until(() => a.doc.querySelector('[data-hook]') !== null, 'thẻ Webhook')
+        a.click('[data-act="testHook"]')
+        await a.settle()
+        await new Promise((r) => setTimeout(r, 2100)) // trang tự làm mới sau 2 giây
+        await a.until(() => a.text().includes('Lần đẩy gần nhất'), 'dòng chẩn đoán')
+        expect(a.text()).toContain('THẤT BẠI')
+        expect(a.text()).toContain('lệch giờ quá 5 phút')
+    })
 })

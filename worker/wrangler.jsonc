@@ -9,7 +9,9 @@
   "vars": { "VPS_ORIGIN": "" },
   // Dọn tín hiệu cũ mỗi ngày lúc 20:00 UTC (= 03:00 giờ Việt Nam). Số ngày giữ lại do Admin chọn ở tab Tín hiệu (mặc định 7).
   // Mỗi lần chạy tính 1 request Worker/ngày.
-  "triggers": { "crons": ["0 20 * * *"] },
+  // `* * * * *`: mỗi phút Worker tự đẩy lại tín hiệu chưa giao được cho VPS (1.440 request/ngày, trong tổng 100.000 của gói Free).
+  // Dòng retention phải khớp RETENTION_CRON trong src/retention.ts.
+  "triggers": { "crons": ["0 20 * * *", "* * * * *"] },
   "d1_databases": [
     {
       "binding": "DB",

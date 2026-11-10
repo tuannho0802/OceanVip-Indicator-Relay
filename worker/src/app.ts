@@ -1,6 +1,6 @@
 import { SERVER_ID_RE, deriveServerKey, encodeConnectCode } from '../../src/shared/connect'
 import { COOKIE, SESSION_SEC, burnPassword, hashPassword, passwordProblem, randomToken, readCookie, sessionCookie, sha256Hex, tempPassword, verifyPassword } from './auth'
-import { ONLINE_SEC, hookTargets, normalizeOrigin, storeAndDeliver } from './deliver'
+import { ONLINE_SEC, hookTargets, normalizeOrigin, probeServer, readDiags, storeAndDeliver } from './deliver'
 import type { Ctx, Env } from './handler'
 import { json } from './http'
 import { MAX_RETENTION_DAYS, getRetentionDays, lastRun, purge, setRetentionDays, stats } from './retention'
@@ -32,6 +32,7 @@ const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/
 const MAX_FAILS = 5
 const LOCK_SEC = 300
 const MAX_QUOTA = 1000
+const PROBE_GAP_SEC = 5
 const TEST_TEXT = 'OCEAN TEST | ping từ trang quản lý (không phải tín hiệu giao dịch)'
 
 type Deps = { now: number; fetchFn: typeof fetch; retryMs?: readonly number[] }
@@ -130,6 +131,7 @@ async function overview(env: Env, u: UserRow, workerUrl: string, now: number): P
   const sSt = env.DB.prepare(sSql)
   const hSt = env.DB.prepare(hSql)
   const servers = (await (admin ? sSt : sSt.bind(u.id)).all<ServerRow>()).results
+  const diags = await readDiags(env)
   const hooks = (await (admin ? hSt : hSt.bind(u.id)).all<HookRow>()).results
   const mine = (o: number | null) => o === u.id
   const body: Record<string, unknown> = {
@@ -152,6 +154,10 @@ async function overview(env: Env, u: UserRow, workerUrl: string, now: number): P
       has_url: s.has_url === 1,
       pending: s.pending,
       created: s.created,
+      last_push: (() => {
+        const d = diags.get(s.id || '')
+        return d ? { ago: Math.max(0, now - d.at), ok: d.ok, tries: d.tries, status: d.status, error: d.error, ms: d.ms } : null
+      })(),
     })),
     hooks: hooks.map((h) => ({
       id: h.id,
@@ -370,6 +376,17 @@ export async function appRoute(req: Request, env: Env, ctx: Ctx, url: URL, deps:
       if (parts[3] === 'code' && m === 'GET') {
         if (!env.SYNC_KEY) return err(503, 'sync_disabled', 'Worker chưa có SYNC_KEY')
         return json(200, { id, code: await connectCode(env, workerUrl, id) })
+      }
+      if (parts[3] === 'probe' && m === 'POST') {
+        // Đo độ trễ Worker → VPS bằng đường đẩy thật (có ký HMAC, không tạo tín hiệu). Giãn cách vài giây để không bị dùng làm công cụ dội request.
+        if (!env.SYNC_KEY) return err(503, 'sync_disabled', 'Worker chưa có SYNC_KEY')
+        const ow = s.owner === null ? null : await env.DB.prepare('SELECT locked FROM users WHERE id = ?').bind(s.owner).first<{ locked: number }>()
+        if (s.locked === 1 || ow?.locked === 1) return err(403, 'server_locked', 'VPS hoặc tài khoản đang bị khóa')
+        const k = `probe_at:${id}`
+        const last = await env.DB.prepare('SELECT v FROM kv WHERE k = ?').bind(k).first<{ v: string }>()
+        if (last && now - Number(last.v) < PROBE_GAP_SEC) return err(429, 'too_fast', `Vừa đo xong, đợi ${PROBE_GAP_SEC} giây rồi đo lại`)
+        await env.DB.prepare('INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').bind(k, String(now)).run()
+        return json(200, { now, ...(await probeServer(env, id, now, deps.fetchFn)) })
       }
       if (parts[3] === undefined && m === 'PATCH') {
         const b = await readBody(req)

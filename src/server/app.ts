@@ -192,6 +192,23 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
       return json(res, 200, { ok: true, duplicate: r === 'dup' })
     }
 
+    // 2b) Worker đo độ trễ: cùng chữ ký như /api/ingest nhưng KHÔNG tạo tín hiệu. Trả giờ Server để Worker biết VPS có lệch giờ (bad_time) không.
+    if (p === '/api/ping' && req.method === 'POST') {
+      if (!cfg.syncKey) return json(res, 503, { error: 'worker_disabled' })
+      if (throttled()) return json(res, 429, { error: 'too_many_attempts' })
+      let body: string
+      try {
+        body = await readBody(req, 1024)
+      } catch {
+        return json(res, 413, { error: 'too_large' })
+      }
+      const ts = Number(req.headers['x-ocean-ts'])
+      const sig = String(req.headers['x-ocean-sig'] ?? '')
+      if (!Number.isInteger(ts) || Math.abs(now - ts) > SKEW_SEC) return reject(401, 'bad_time', 'ping')
+      if (!safeEqual(sig, await signBody(cfg.syncKey, ts, body))) return reject(401, 'bad_sig', 'ping')
+      return json(res, 200, { ok: true, now, skew: now - ts })
+    }
+
     // 3) Gateway (EA): ping + nhận tín hiệu. Khóa EA để biết đúng là EA của mình; tín hiệu giao xuống có chữ ký.
     if (p === '/api/gw/ping' && req.method === 'POST') {
       if (throttled()) return json(res, 429, { error: 'too_many_attempts' })

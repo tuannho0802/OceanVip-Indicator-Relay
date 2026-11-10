@@ -7,6 +7,8 @@ import type { Env } from './handler'
  *  - Thủ công (trang quản lý, tab Tín hiệu): giữ N ngày gần nhất, xóa theo khoảng ngày, hoặc xóa hết. Admin xóa của mọi người, User chỉ xóa của mình.
  * Không bao giờ xóa tín hiệu vừa nhận (trong PENDING_GRACE_SEC) mà còn VPS chưa nhận: xóa nhầm sẽ làm mất lệnh chưa kịp giao.
  */
+/** Lịch dọn hằng ngày; phải khớp một dòng trong worker/wrangler.jsonc → triggers.crons (Cloudflare gửi chính chuỗi này vào event.cron). */
+export const RETENTION_CRON = '0 20 * * *'
 export const DEFAULT_RETENTION_DAYS = 7
 export const MAX_RETENTION_DAYS = 3650
 /** Khớp PULL_WINDOW_SEC của handler.ts: tín hiệu chưa giao nhưng đã quá một giờ thì VPS cũng không kéo bù nữa nên xóa được. */

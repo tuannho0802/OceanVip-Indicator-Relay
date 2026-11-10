@@ -43,7 +43,7 @@ const CLIENT_JS = String.raw`
 (function () {
   'use strict'
   var root = document.getElementById('root')
-  var S = { loaded: false, tab: 'conn', user: null, setup: 'ok', notice: '', ov: null, sigs: null, ret: null, codes: {}, secret: null }
+  var S = { loaded: false, tab: 'conn', user: null, setup: 'ok', notice: '', ov: null, sigs: null, ret: null, codes: {}, secret: null, probes: {}, probing: {} }
   var toastTimer = 0
 
   function add(e, c) {
@@ -225,8 +225,48 @@ const CLIENT_JS = String.raw`
     if (s.status === 'never') return 'Chưa có liên lạc nào. Trên chính VPS, mở http://127.0.0.1:8090/#setup, dán mã kết nối (nút “Lấy mã kết nối”) rồi bấm “Lưu và kiểm tra kết nối”.'
     if (s.status === 'stale') return 'Mất liên lạc ' + ago(s.seen_ago) + '. Kiểm tra VPS đang bật, có Internet và dịch vụ OCEAN Relay đang chạy. Chỉ kéo bù được tín hiệu trong vòng 1 giờ gần nhất.'
     if (!s.has_url) return 'VPS chưa báo địa chỉ tunnel nên Worker chưa đẩy trực tiếp được; VPS vẫn nhận bằng kéo bù theo chu kỳ OCEAN_POLL_SEC (mặc định 5 phút khi có tunnel, 5 giây khi chưa có), nên có thể trễ.'
-    if (s.pending > 0) return 'Đang chờ ' + s.pending + ' tín hiệu chưa giao, Worker đang thử đẩy lại; nếu không được VPS sẽ kéo ở nhịp tới.'
+    if (s.pending > 0) return 'Đang chờ ' + s.pending + ' tín hiệu chưa giao: Worker đẩy lại nhiều lần ngay khi nhận và quét lại mỗi phút; nếu vẫn không được VPS sẽ kéo ở nhịp tới.'
     return ''
+  }
+
+  /** Giải thích mã lỗi đẩy/đo (Worker → VPS) bằng tiếng Việt, kèm hướng xử lý. */
+  function pushReason(error, status) {
+    var e = error || ''
+    if (e === 'no_url') return 'VPS chưa báo địa chỉ tunnel nên Worker không có chỗ để đẩy'
+    if (e === 'timeout') return 'hết thời gian chờ: tunnel chậm hoặc VPS không phản hồi'
+    if (e === 'network') return 'không nối được tới địa chỉ tunnel (tunnel đã đổi hoặc đã chết)'
+    if (e === 'bad_time') return 'VPS lệch giờ quá 5 phút so với Worker nên Server từ chối chữ ký. Hãy đồng bộ giờ Windows (w32tm /resync)'
+    if (e === 'bad_sig') return 'sai khóa: mã kết nối trên VPS không khớp với Worker'
+    if (e === 'too_many_attempts') return 'Server đang chặn tạm vì có quá nhiều lần sai khóa (HTTP 429)'
+    if (status === 401) return 'Server từ chối chữ ký (lệch giờ hoặc sai khóa), HTTP 401'
+    if (status === 403) return 'Server từ chối (HTTP 403)'
+    if (status === 404) return 'địa chỉ tunnel cũ hoặc Server bản quá cũ (HTTP 404)'
+    if (status && status >= 500) return 'tunnel không thông tới VPS (HTTP ' + status + ')'
+    return e || 'lỗi không rõ'
+  }
+  function lastPushLine(s) {
+    var p = s.last_push
+    if (!p) return null
+    if (p.ok) return h('div', { class: 'muted', text: 'Lần đẩy gần nhất: thành công (' + p.tries + ' lần thử, ' + p.ms + ' ms, ' + ago(p.ago) + ')' })
+    return h('div', { class: 'warn', text: 'Lần đẩy gần nhất: THẤT BẠI sau ' + p.tries + ' lần thử (' + ago(p.ago) + '): ' + pushReason(p.error, p.status) + '. Tín hiệu sẽ được Worker quét lại mỗi phút hoặc VPS kéo bù.' })
+  }
+  function probeView(id) {
+    if (S.probing[id]) return h('div', { class: 'note', text: 'Đang đo độ trễ Worker → VPS (tối đa vài chục giây)…' })
+    var r = S.probes[id]
+    if (!r) return null
+    var box = h('div', { class: r.ok ? 'note' : 'warn' })
+    if (r.error) { add(box, h('div', { text: 'Không đo được: ' + pushReason(r.error, null) })); return box }
+    if (!r.ok) {
+      var f = r.samples[0] || {}
+      add(box, h('div', { text: 'Worker KHÔNG gọi được VPS (' + r.sent + ' lần đều lỗi): ' + pushReason(f.error, f.status) }))
+    } else {
+      var q = r.avg < 600 ? 'Tốt' : (r.avg < 2000 ? 'Chậm' : 'Rất chậm')
+      add(box, h('div', { text: q + ' · Worker → VPS: ' + r.received + '/' + r.sent + ' lần thành công · nhanh nhất ' + r.min + ' ms · trung bình ' + r.avg + ' ms · chậm nhất ' + r.max + ' ms' + (r.first !== null ? ' · lần đầu ' + r.first + ' ms' : '') }))
+    }
+    add(box, h('div', { class: 'mono', text: 'Từng lần: ' + r.samples.map(function (x) { return x.error ? (x.ms !== null ? x.error + ' ' + x.ms + 'ms' : x.error) : x.ms + 'ms' }).join(' · ') }))
+    if (r.skew !== null) add(box, h('div', { class: Math.abs(r.skew) > 120 ? 'warn' : 'muted', text: 'Giờ VPS so với Worker: ' + (r.skew > 0 ? '+' : '') + r.skew + ' giây' + (Math.abs(r.skew) > 120 ? ' (lệch nhiều: nguy cơ bị từ chối chữ ký khi quá 300 giây, hãy đồng bộ giờ Windows)' : '') }))
+    if (!r.verified) add(box, h('div', { class: 'muted', text: 'VPS dùng Server bản cũ (chưa có /api/ping): mới đo được kết nối, chưa kiểm khóa và giờ. Hãy cập nhật Server lên bản mới.' }))
+    return box
   }
 
   function serverCard(s, admin) {
@@ -236,11 +276,14 @@ const CLIENT_JS = String.raw`
       h('div', { class: 'row' },
         h('h3', { text: s.name }), badge(s),
         h('span', { class: 'muted grow', text: (admin && s.owner_name ? 'Chủ: ' + s.owner_name + ' · ' : '') + 'thấy lần cuối: ' + ago(s.seen_ago) }),
+        s.id && !s.locked && !s.owner_locked ? h('button', { 'data-act': 'probeServer', 'data-id': s.id, disabled: S.probing[s.id] ? true : null, text: S.probing[s.id] ? 'Đang đo…' : 'Đo độ trễ' }) : null,
         s.id ? h('button', { 'data-act': 'getCode', 'data-id': s.id, text: 'Lấy mã kết nối' }) : null,
         admin && s.id ? h('button', { 'data-act': 'lockServer', 'data-id': s.id, 'data-v': s.locked ? '0' : '1', class: s.locked ? '' : 'dng', text: s.locked ? 'Mở khóa' : 'Khóa' }) : null,
         s.id ? h('button', { class: 'dng', 'data-act': 'delServer', 'data-id': s.id, text: 'Xóa' }) : null),
       h('div', { class: 'mono', text: s.id ? 'Server ID: ' + s.id : '' }),
-      hint ? h('div', { class: s.status === 'stale' || s.locked || s.owner_locked ? 'warn' : 'note', text: hint }) : null)
+      hint ? h('div', { class: s.status === 'stale' || s.locked || s.owner_locked ? 'warn' : 'note', text: hint }) : null,
+      lastPushLine(s),
+      s.id ? probeView(s.id) : null)
     if (code) {
       add(card, h('div', { class: 'row', style: 'margin-top:8px' },
         h('input', { class: 'url', readonly: true, value: code, 'data-sel': true }),
@@ -483,6 +526,16 @@ const CLIENT_JS = String.raw`
       var id = t.getAttribute('data-id')
       call('GET', '/api/servers/' + id + '/code').then(function (r) { if (r) { S.codes[id] = r.code; render() } })
     },
+    probeServer: function (t) {
+      var id = t.getAttribute('data-id')
+      if (S.probing[id]) return
+      S.probing[id] = true
+      render()
+      api('POST', '/api/servers/' + id + '/probe').then(function (r) { S.probes[id] = r }).catch(function (e) {
+        delete S.probes[id]
+        fail(e)
+      }).then(function () { delete S.probing[id]; render() })
+    },
     delServer: function (t) {
       if (!window.confirm('Xóa VPS này? VPS sẽ không còn nhận tín hiệu và mã kết nối của nó bị thu hồi vĩnh viễn.')) return
       call('DELETE', '/api/servers/' + t.getAttribute('data-id'), null, 'Đã xóa VPS').then(function (r) { if (r) refresh() })
@@ -496,6 +549,8 @@ const CLIENT_JS = String.raw`
         if (!r) return
         toast(r.servers === 0 ? 'Đã nhận nhưng chưa có VPS nào đang hoạt động để giao' : 'Đã gửi thử tới ' + r.servers + ' VPS. Xem kết quả ở tab Tín hiệu', r.servers === 0)
         refresh()
+        // Worker đẩy ở nền (có thể thử lại tới ~25 giây): làm mới thêm vài lần để dòng “Lần đẩy gần nhất” của VPS hiện ra mà không cần F5.
+        ;[2000, 8000, 20000].forEach(function (ms) { setTimeout(function () { if (S.user) refresh() }, ms) })
       })
     },
     rotateHook: function (t) {

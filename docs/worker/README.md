@@ -7,11 +7,11 @@
 | `src/app.ts` | API quản lý: đăng nhập, người dùng, hạn mức, VPS, Webhook, tín hiệu; khởi tạo Admin từ `ADMIN_PASSWORD` |
 | `src/auth.ts` | Băm mật khẩu PBKDF2-SHA256, token phiên (D1 chỉ lưu SHA-256), cookie HttpOnly/Secure/SameSite=Strict |
 | `src/retention.ts` | Dọn tín hiệu cũ: cấu hình số ngày giữ (bảng `kv`, khóa `retention_days`), xóa thủ công (giữ N ngày / theo khoảng ngày / xóa hết), job cron hằng ngày |
-| `src/deliver.ts` | Lưu tín hiệu, chọn VPS đích theo chủ sở hữu/khóa, đẩy ký HMAC |
+| `src/deliver.ts` | Lưu tín hiệu, chọn VPS đích theo chủ sở hữu/khóa, đẩy ký HMAC (thử lại tối đa 6 lần, ghi chẩn đoán `push:<id>`), `flushPending` (Cron mỗi phút đẩy lại tín hiệu chưa giao) và `probeServer` (đo độ trễ Worker → VPS) |
 | `src/ui.ts` | Trang quản lý (JS thuần, CSP nonce, mọi dữ liệu qua `textContent`) và trang `/help` |
 | `migrations/0001..0003` | Nguồn sự thật của DB trên D1 thật. `0003_users.sql`: `users`, `sessions`, `hooks`, `revoked_servers` + cột chủ sở hữu |
 | `schema.sql` | Bản gộp của migrations cho test/dev local. `test/worker-schema.test.ts` bắt lỗi nếu hai bên lệch nhau |
-| `wrangler.jsonc` | Cấu hình; `database_id` do `npm run setup` điền; `triggers.crons` = lịch dọn tín hiệu (20:00 UTC = 03:00 giờ VN) |
+| `wrangler.jsonc` | Cấu hình; `database_id` do `npm run setup` điền; `triggers.crons` = lịch dọn tín hiệu (20:00 UTC = 03:00 giờ VN) và lịch quét đẩy lại mỗi phút (`* * * * *`, ≈1.440 request/ngày) |
 | `setup.mjs` / `issue-code.mjs` | Cài một lần (D1 + migration + secret + deploy) / cách cũ cấp mã cho VPS của Admin, `--list` |
 
 ## Secret / biến
