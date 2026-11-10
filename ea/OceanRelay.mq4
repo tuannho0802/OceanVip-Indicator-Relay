@@ -11,6 +11,8 @@
 //| Chua duoc bien dich tren MT4 that: thu tren DEMO truoc.          |
 //| Dat http://127.0.0.1:47860 vao Tools > Options > Expert Advisors |
 //| > Allow WebRequest for listed URL (doi cong thi sua InpGateway). |
+//| MT4 bao err=5200 neu URL co cong: dung InpGateway=http://127.0.0.1|
+//| (khong cong) + netsh portproxy cong 80 -> cong Gateway (xem docs).|
 //+------------------------------------------------------------------+
 #property copyright "Ocean Relay"
 #property version "1.00"

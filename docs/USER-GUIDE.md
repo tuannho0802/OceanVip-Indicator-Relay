@@ -31,6 +31,18 @@ Khi Gateway chưa mở được cổng mới, nó vẫn giữ cổng cũ để E
 2. Kéo EA **OceanRelay** (Navigator) lên **một** chart bất kỳ.
 3. EA mặc định **chỉ theo dõi**. Thử trên DEMO, thấy tín hiệu hiện ra rồi mới bật `InpAllowTrading=true` và chỉnh `InpLotPerOrder`.
 
+## Dùng MT4 (một lần)
+MT4 không gọi được địa chỉ có cổng, nên nếu Experts báo `Gateway loi, HTTP=-1 err=5200` thì làm như sau. Trang Cài đặt, bước 3, mục **Dùng MT4?** có sẵn các lệnh dưới đây kèm nút **Chép**.
+1. Trên VPS, mở PowerShell hoặc CMD bằng **Run as administrator**, chạy (đổi `47860` nếu bạn đã đổi cổng Gateway):
+   ```
+   netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=80 connectaddress=127.0.0.1 connectport=47860
+   netsh interface portproxy show all
+   ```
+   Lệnh thứ hai phải có dòng `127.0.0.1  80  127.0.0.1  47860`. Mở `http://127.0.0.1/v1/status` trên trình duyệt phải ra `{"ok":true,...}`.
+2. Trong MT4: Tools → Options → Expert Advisors → **Allow WebRequest** → thêm `http://127.0.0.1` (không cổng, không dấu `/` cuối).
+3. Ở Inputs của EA, đặt **InpGateway** = `http://127.0.0.1` (bỏ phần cổng), bấm OK hoặc gắn lại EA.
+Cổng 80 phải còn trống (kiểm tra: `netstat -ano | findstr "127.0.0.1:80 "` không in gì). Gỡ chuyển cổng: `netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=80`. MT5 không cần bước này.
+
 ## Mỗi tín hiệu đánh thế nào
 Mỗi tín hiệu vào lệnh mở **3 lệnh cùng chiều, cùng giá vào, cùng SL, chỉ khác TP** (TP1, TP2, TP3). Tên symbol tự ghép theo sàn (XAUUSD → XAUUSDm, XAUUSD.a…); nếu sàn có nhiều tên gần giống thì EA không đánh và ghi log, khi đó đặt ở mục Nâng cao của trang Cài đặt: `XAUUSD=<tên ở sàn>`.
 
@@ -44,6 +56,7 @@ Mỗi tín hiệu vào lệnh mở **3 lệnh cùng chiều, cùng giá vào, c�
 | Hiện tượng | Cách xử lý |
 |---|---|
 | EA không kết nối được Gateway (`HTTP=-1`/4060), hoặc mục Trạng thái báo "Gateway chưa mở được cổng" | Cổng trùng chương trình khác, hoặc chưa thêm đúng địa chỉ vào Allow WebRequest / `InpGateway`. Xem mục "Đổi cổng Gateway" ở trên. |
+| MT4: Experts báo `Gateway loi, HTTP=-1 err=5200` | MT4 không nhận địa chỉ có cổng. Xem mục "Dùng MT4" ở trên (chuyển cổng 80, `InpGateway=http://127.0.0.1`). |
 | Log Gateway: HTTP 403 | Số tài khoản MT5 không nằm trong danh sách đã khai. Mở trang Cài đặt, sửa ô tài khoản. |
 | Trang Cài đặt báo lỗi 401 / mã kết nối sai | Lấy lại mã ở trang quản lý (tab Kết nối → **Lấy mã kết nối**) rồi dán lại ở trang Cài đặt. Nếu VPS đã bị xóa khỏi danh sách thì tạo VPS mới. |
 | Trang Cài đặt báo HTTP 403 | Quản trị đang khóa VPS hoặc tài khoản của bạn (hoặc VPS đã bị xóa): hỏi quản trị. |

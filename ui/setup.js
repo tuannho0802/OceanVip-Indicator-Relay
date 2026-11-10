@@ -8,6 +8,12 @@
   const ago=s=>s<60?s+'s':s<3600?Math.floor(s/60)+'m':s<86400?Math.floor(s/3600)+'h':Math.floor(s/86400)+'d';
   let info=null,live=null,loaded=false,autoOpened=false,saving=false,gwPort=null;
 
+  // Lệnh cho MT4 (chuyển cổng 80 -> cổng Gateway): số cổng cuối lệnh luôn theo cổng Gateway đang dùng.
+  function mt4Ports(port){
+    $('mt4Cmd').textContent='netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=80 connectaddress=127.0.0.1 connectport='+port;
+    $('mt4Row').textContent='127.0.0.1  80  127.0.0.1  '+port;
+  }
+
   const isSetup=()=>location.hash==='#setup'&&!!info&&info.local===true;
 
   function route(){
@@ -34,6 +40,7 @@
     $('fPort').value=v.gatewayPort===v.defaultGatewayPort?'':String(v.gatewayPort);
     $('fPort').placeholder='mặc định '+v.defaultGatewayPort;
     $('gwUrl').textContent='http://127.0.0.1:'+v.gatewayPort;
+    mt4Ports(v.gatewayPort);
     if(v.symbolMap||v.tfs||v.gatewayPort!==v.defaultGatewayPort)$('adv').open=true;
   }
 
@@ -62,11 +69,11 @@
     if(g){
       if(g.lastSeenAgoSec===null||g.lastSeenAgoSec>30)L.push(check('warn','Chưa thấy Gateway báo về: Gateway chưa chạy, hoặc là bản cũ (chạy lại bộ cài mới nhất)'));
       else if(g.error)L.push(check('bad','Gateway chưa mở được cổng '+g.port+': '+g.error+'. Đổi sang cổng khác ở mục Nâng cao'+(g.listening?' (tạm giữ cổng '+g.listening+')':'')));
-      else if(g.listening===g.port){$('gwUrl').textContent='http://127.0.0.1:'+g.port;L.push(check('ok','Gateway đang nghe cổng '+g.port+' (địa chỉ cho MT5: http://127.0.0.1:'+g.port+')'))}
+      else if(g.listening===g.port){$('gwUrl').textContent='http://127.0.0.1:'+g.port;mt4Ports(g.port);L.push(check('ok','Gateway đang nghe cổng '+g.port+' (địa chỉ cho MT5: http://127.0.0.1:'+g.port+')'))}
       else L.push(check('warn','Gateway đang chuyển sang cổng '+g.port+'…'));
     }
     const on=live?live.terminals.filter(t=>t.online).length:0;
-    L.push(on>0?check('ok',on+' terminal MT5 đang online'):check('warn','Chưa thấy EA nào: làm bước 3 trong MT5'));
+    L.push(on>0?check('ok',on+' terminal MT5 đang online'):check('warn','Chưa thấy EA nào: làm bước 3 trong MT5. Dùng MT4 mà Experts báo err=5200: mở mục "Dùng MT4?" ở bước 3'));
     $('checks').replaceChildren(...L);
   }
 
@@ -107,6 +114,13 @@
     catch{const r=document.createRange();r.selectNodeContents($('gwUrl'));const s=getSelection();s.removeAllRanges();s.addRange(r);$('btnCopy').textContent='Bôi đen xong, bấm Ctrl+C'}
     setTimeout(()=>{$('btnCopy').textContent='Chép'},2500);
   });
+
+  document.querySelectorAll('[data-copy]').forEach(b=>b.addEventListener('click',async()=>{
+    const src=$(b.getAttribute('data-copy'));if(!src)return;
+    try{await navigator.clipboard.writeText(src.textContent);b.textContent='Đã chép'}
+    catch{const r=document.createRange();r.selectNodeContents(src);const s=getSelection();s.removeAllRanges();s.addRange(r);b.textContent='Bôi đen xong, bấm Ctrl+C'}
+    setTimeout(()=>{b.textContent='Chép'},2500);
+  }));
 
   window.onData=(i,d)=>{
     info=i;live=d;

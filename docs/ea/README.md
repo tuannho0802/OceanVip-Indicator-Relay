@@ -2,6 +2,9 @@
 
 `OceanRelay.mq5` v0.2.0 (MQL5). **Chưa được biên dịch hay chạy trên MT5 thật** — thử trên DEMO.
 
+## Bản MT4 (`OceanRelay.mq4`)
+MT4 báo `err=5200` nếu `InpGateway` có cổng (`http://127.0.0.1:47860`). Dùng `InpGateway=http://127.0.0.1` + Allow WebRequest `http://127.0.0.1`, và chuyển cổng 80 sang cổng Gateway bằng `netsh interface portproxy` (lệnh đầy đủ: [OPERATIONS.md](../OPERATIONS.md), mục "MT4 (cổng 80)").
+
 ## Chế độ
 - Mặc định `InpAllowTrading=false`: chỉ ping, hiển thị tín hiệu, ack `trading_off`.
 - Bật: với mỗi `S|…` mở 3 lệnh thị trường cùng SL, TP1/TP2/TP3 (hoặc 1 lệnh lot×3 với TP3 nếu `InpTP3Only`).

@@ -71,6 +71,22 @@
         <li>Ở thẻ <b>Inputs</b> của EA, ô <b>InpGateway</b> phải đúng địa chỉ ở trên (EA mới cài đã đặt sẵn theo cổng mặc định). Nếu bạn đổi cổng sau khi đã gắn EA: chuột phải chart › Expert Advisors › Properties › Inputs, sửa <b>InpGateway</b>.</li>
         <li>Mặc định EA <b>chỉ theo dõi</b>, chưa vào lệnh. Thử trên tài khoản DEMO rồi mới bật <b>InpAllowTrading</b>.</li>
       </ol>
+      <details id="mt4" class="mt4">
+        <summary>Dùng MT4? (Experts báo <code>Gateway loi, HTTP=-1 err=5200</code>)</summary>
+        <p class="hint">MT4 không gọi được địa chỉ có cổng như <code>:47860</code> (lỗi 5200), MT5 thì được. Cách xử lý: cho Windows chuyển cổng 80 sang cổng Gateway, rồi trong MT4 dùng địa chỉ <b>không có cổng</b>. Chỉ MT4 cần làm; MT5 giữ nguyên như bước 3 ở trên.</p>
+        <ol class="steps">
+          <li>Trên VPS, mở <b>PowerShell</b> hoặc <b>CMD</b> bằng <b>Run as administrator</b>. Kiểm tra cổng 80 còn trống (không in ra gì là trống):
+            <pre class="cmd"><code id="mt4Chk">netstat -ano | findstr "127.0.0.1:80 "</code></pre><button class="btn ghost sm" data-copy="mt4Chk" type="button">Chép</button></li>
+          <li>Chạy lệnh chuyển cổng 80 sang cổng Gateway:
+            <pre class="cmd"><code id="mt4Cmd">netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=80 connectaddress=127.0.0.1 connectport=47860</code></pre><button class="btn ghost sm" data-copy="mt4Cmd" type="button">Chép</button></li>
+          <li>Kiểm tra: lệnh dưới phải có dòng <code id="mt4Row">127.0.0.1  80  127.0.0.1  47860</code>, và mở <code>http://127.0.0.1/v1/status</code> (không có cổng) trên trình duyệt phải ra <code>{"ok":true,...}</code>.
+            <pre class="cmd"><code id="mt4Show">netsh interface portproxy show all</code></pre><button class="btn ghost sm" data-copy="mt4Show" type="button">Chép</button></li>
+          <li>Trong MT4: <b>Tools › Options › Expert Advisors › Allow WebRequest</b>, thêm <code>http://127.0.0.1</code> (không cổng, không dấu <code>/</code> cuối), bấm OK.</li>
+          <li>Ở thẻ <b>Inputs</b> của EA (chuột phải chart › Expert Advisors › Properties), đặt <b>InpGateway</b> = <code>http://127.0.0.1</code> (bỏ phần cổng), bấm OK hoặc gắn lại EA. Sau 2-3 giây Experts hết báo lỗi và mục Trạng thái phía trên báo terminal online.</li>
+        </ol>
+        <p class="hint">Lệnh chuyển cổng được giữ sau khi khởi động lại VPS (cần dịch vụ IP Helper đang chạy). Nếu bước 1 có kết quả, cổng 80 đang bị chương trình khác dùng (IIS, nginx...): giải phóng cổng đó trước. Nếu bạn đổi cổng Gateway ở mục Nâng cao thì chạy lại lệnh ở bước 2 (số cổng cuối lệnh tự đổi theo). Cần gỡ chuyển cổng:
+          <pre class="cmd"><code id="mt4Del">netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=80</code></pre><button class="btn ghost sm" data-copy="mt4Del" type="button">Chép</button></p>
+      </details>
     </section>
   </div>
 </main>

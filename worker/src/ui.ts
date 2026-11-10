@@ -419,6 +419,10 @@ const CLIENT_JS = String.raw`
         'MT5 → Tools → Options → Expert Advisors → bật Allow WebRequest và thêm địa chỉ Gateway (mặc định http://127.0.0.1:47860; trang Cài đặt trên VPS luôn ghi đúng địa chỉ đang dùng).',
         'Gắn EA OceanRelay lên MỘT chart. Thử trên tài khoản DEMO trước: thấy tín hiệu và ack trên giao diện VPS là thông.'
       ])),
+      sec('MT4 (nếu dùng MT4 thay MT5)', ol([
+        'MT4 không nhận địa chỉ có cổng: Allow WebRequest thêm http://127.0.0.1 (không cổng) và đặt InpGateway của EA là http://127.0.0.1.',
+        'Trang Cài đặt trên VPS (http://127.0.0.1:8090/#setup, bước 3, mục “Dùng MT4?”) hướng dẫn từng bước kèm lệnh chép sẵn.'
+      ])),
       sec('3 · Dán Webhook URL vào TradingView', ol([
         'Mở biểu đồ có indicator OCEAN VIP → bấm Alert (Alt+A) → Tạo alert.',
         'Condition: chọn indicator, rồi chọn “Any alert() function call”.',
@@ -433,6 +437,7 @@ const CLIENT_JS = String.raw`
           ['TradingView không gửi được alert', 'TradingView chỉ cho Webhook khi tài khoản có gói trả phí và đã bật xác thực 2 lớp (2FA); URL không phải https; URL có khoảng trắng/xuống dòng.', 'Kiểm tra gói + 2FA trong cài đặt TradingView; sao chép lại URL bằng nút Sao chép rồi dán lại.'],
           ['Webhook trả 401 bad_key', 'URL thiếu ?key=…, dán sai hoặc cắt cụt; hoặc Webhook đã bị “Đổi khóa”/xóa.', 'Lấy lại URL ở tab Kết nối và cập nhật alert trong TradingView.'],
           ['Webhook trả 403 hook_locked / user_locked', 'Admin đang khóa Webhook hoặc tài khoản.', 'Liên hệ Admin để mở khóa.'],
+          ['EA trên MT4 báo err=5200 (MT5 thì chạy bình thường)', 'MT4 không nhận địa chỉ Gateway có cổng (http://127.0.0.1:47860).', 'Trên VPS mở http://127.0.0.1:8090/#setup, bước 3, mục “Dùng MT4?” và làm theo (đặt InpGateway=http://127.0.0.1).'],
           ['Dán trang chủ Worker (không có /webhook) vào TradingView', 'URL phải có đuôi /webhook?key=…', 'Chỉ dùng URL do nút “Tạo Webhook URL” sinh ra.'],
           ['VPS “Chưa kết nối”', 'Chưa dán mã trên VPS, hoặc dán sai VPS (mỗi VPS một mã riêng).', 'Làm lại bước 2; mã đã dán ở VPS khác thì tạo VPS mới.'],
           ['VPS “Mất liên lạc”', 'VPS tắt, mất mạng, dịch vụ OCEAN Relay không chạy; hoặc bị Admin khóa.', 'Bật lại VPS/dịch vụ; xem huy hiệu Worker ở trang Cài đặt trên VPS (báo 403 = bị khóa, 401 = mã sai/đã xóa).'],
