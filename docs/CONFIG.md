@@ -49,6 +49,8 @@ Secret: `WEBHOOK_KEY`, `SYNC_KEY`. Biến: `VPS_ORIGIN` (chỉ khi tunnel có t�
 ## Input của EA
 `InpGateway`, `InpPingSec`, `InpTimeoutMs`, `InpTerminalId`; đặt lệnh: `InpAllowTrading` (false), `InpLotPerOrder` (0.01), `InpMaxTotalLots` (0.30), `InpMaxAgeSec` (60), `InpMaxDevPoints` (500), `InpSlippagePts` (30), `InpTP3Only`, `InpMagic`, `InpComment`.
 
+BreakEven (mặc định tắt): `InpBEEnable` (false), `InpBETrigger` (`BE_AFTER_TP1` / `BE_AFTER_TP2`), `InpBEOffset` (3.0), `InpBEUnit` (`BE_UNIT_PRICE` / `BE_UNIT_PIPS`), `InpBELockProfit` (false). Xem `docs/ea/README.md`.
+
 
 ## Nhiều Server (v0.1.0)
 | Biến | Nơi | Ý nghĩa |

@@ -1,8 +1,10 @@
 //+------------------------------------------------------------------+
-//| OceanRelay.mq5  v0.1.0  (DANH LENH THEO TIN HIEU)                |
+//| OceanRelay.mq5  v0.2.0  (DANH LENH + BREAKEVEN THEO TP1/TP2)    |
 //| Ping Gateway cuc bo moi InpPingSec giay: gui tai khoan + lenh    |
 //| dang mo, nhan tin hieu OCEAN (da duoc Gateway kiem chu ky HMAC), |
 //| mo 3 lenh cung Entry/SL voi TP1/TP2/TP3, ack ket qua.            |
+//| BreakEven (tuy chon, mac dinh TAT): khi lenh TP1 (hoac TP2) chot |
+//| lai thi doi SL cac lenh con lai ve gan gia vao N don vi.         |
 //| EA chi noi chuyen voi Gateway/Server tren VPS (khong goi Worker).|
 //| MAC DINH InpAllowTrading=false: chi theo doi, KHONG dat lenh.    |
 //| Chua duoc bien dich tren MT5 that: thu tren DEMO truoc.          |
@@ -15,13 +17,18 @@
 
 #include <Trade\Trade.mqh>
 
-#define EA_VER "0.1.0"
+#define EA_VER "0.2.0"
 
 input string InpGateway = "http://127.0.0.1:47860";  // Gateway cuc bo (phai nam trong Allow WebRequest)
 input int    InpPingSec = 2;                         // Nhip ping (giay, toi thieu 1)
 input int    InpTimeoutMs = 1500;                    // Timeout WebRequest (ms)
 input string InpTerminalId = "";                     // De trong = login@server
 input bool   InpAutoSymbol = true;                   // Ten symbol khong khop thi tim ten gan nhat o san (XAUUSD -> XAUUSDm, XAUUSD.a ...)
+
+enum ENUM_BE_TRIGGER { BE_AFTER_TP1 = 1,
+                       BE_AFTER_TP2 = 2 };
+enum ENUM_BE_UNIT { BE_UNIT_PRICE = 0,
+                    BE_UNIT_PIPS = 1 };
 
 input group "=== DANH LENH (mac dinh TAT) ==="
 input bool   InpAllowTrading = false;                // CONG TAC TONG: false = chi theo doi, khong dat lenh
@@ -33,6 +40,12 @@ input int    InpSlippagePts  = 30;                   // Truot gia toi da khi kho
 input bool   InpTP3Only      = false;                // true: chi mo 1 lenh toan bo (lot x3) voi TP3
 input long   InpMagic        = 20261109;             // Magic number cua EA (de nhan lenh cua chinh no)
 input string InpComment      = "OCEAN";              // Tien to comment lenh
+
+input group "=== BREAKEVEN (mac dinh TAT) ===" input bool InpBEEnable = false; // BAT/TAT BreakEven (chi hoat dong khi InpAllowTrading = true)
+input ENUM_BE_TRIGGER InpBETrigger = BE_AFTER_TP1;                             // Kich hoat khi: TP1 chot lai (doi SL TP2+TP3) hoac TP2 chot lai (doi SL TP3)
+input double InpBEOffset = 3.0;                                                // N: khoang cach tu GIA VAO toi SL moi (>= 0)
+input ENUM_BE_UNIT InpBEUnit = BE_UNIT_PRICE;                                  // Don vi N: GIA (XAUUSD: 3.0 = 3 USD) hoac PIP (1 pip = 10 point)
+input bool InpBELockProfit = false;                                            // false: SL phia LO (BUY: Entry-N, SELL: Entry+N). true: khoa lai (BUY: Entry+N, SELL: Entry-N)
 
 string   g_acks = "";            // "12:received,13:received" gui kem o ping ke tiep
 ulong    g_seen[64];             // id tin hieu da xu ly (tranh log lap khi Gateway giao lai truoc khi ack toi noi)
@@ -52,7 +65,8 @@ int OnInit()
    g_trade.SetExpertMagicNumber(InpMagic);
    g_trade.SetDeviationInPoints(InpSlippagePts);
    g_trade.SetAsyncMode(false);
-   Print("OceanRelay ", EA_VER, " san sang. Gateway=", InpGateway, InpAllowTrading ? " | DANH LENH: BAT" : " | DANH LENH: TAT (chi theo doi)");
+   Print("OceanRelay ", EA_VER, " san sang. Gateway=", InpGateway, InpAllowTrading ? " | DANH LENH: BAT" : " | DANH LENH: TAT (chi theo doi)",
+         " | BREAKEVEN: ", BeLabel());
    if(InpAllowTrading && !TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)) Print("OceanRelay: CANH BAO - Algo Trading dang tat tren terminal.");
    return INIT_SUCCEEDED;
   }
@@ -61,13 +75,16 @@ void OnDeinit(const int reason) { EventKillTimer(); Comment(""); }
 
 void OnTimer()
   {
-   ulong now = GetTickCount64();
-   if(now < g_nextPingMs) return;
-   int gap = MathMax(1, InpPingSec) * 1000;
-   // Gateway hong: giãn nhip toi da 15 giay de khong spam.
-   if(g_fail > 0) gap = MathMin(15000, gap * (1 + g_fail));
-   g_nextPingMs = now + (ulong)gap;
-   Ping();
+    ManageBreakEven(); // moi giay, doc lap voi nhip ping Gateway
+    ulong now = GetTickCount64();
+    if (now < g_nextPingMs)
+        return;
+    int gap = MathMax(1, InpPingSec) * 1000;
+    // Gateway hong: giãn nhip toi da 15 giay de khong spam.
+    if (g_fail > 0)
+        gap = MathMin(15000, gap * (1 + g_fail));
+    g_nextPingMs = now + (ulong)gap;
+    Ping();
   }
 
 //+------------------------------------------------------------------+
@@ -307,9 +324,227 @@ void OnUpdateSignal(ulong id, string side, string status, string symbol, string 
    Print("OceanRelay CAP NHAT: ", g_last);
   }
 
+  //+------------------------------------------------------------------+
+  //| BREAKEVEN: khi lenh TPn (n = InpBETrigger: 1 hoac 2) cua mot tin |
+  //| hieu chot lai (dong do cham TP), doi SL cac lenh co so TP > n    |
+  //| con mo cua tin hieu do ve gan GIA VAO THUC TE N don vi.          |
+  //|  - Chi dich SL theo huong co loi, khong bao gio keo SL ra xa.    |
+  //|  - Chi lam khi InpAllowTrading bat (cung cong tac tong).         |
+  //|  - Moi tin hieu chi lam mot lan: danh dau Global Variable        |
+  //|    OCEANBE_<login>_<id>, nen khoi dong lai EA khong lam lai.     |
+  //|  - Lenh TPn dong vi SL/dong tay/stop out thi KHONG doi SL.       |
+  //|  - Can tai khoan HEDGING (3 lenh rieng, TP khac nhau).           |
+  //|  - InpTP3Only (1 lenh duy nhat) thi BreakEven khong co tac dung. |
+  //+------------------------------------------------------------------+
+#define BE_MAX_TRY 300 // so lan thu toi da / tin hieu (moi giay 1 lan)
+
+  ulong g_beId[64];
+  int g_beTry[64];
+  int g_beN = 0;
+
+  string BeLabel() {
+      if (!InpBEEnable)
+          return "TAT";
+      return "BAT (sau TP" + IntegerToString((int)InpBETrigger) + ", SL " + (InpBELockProfit ? "khoa lai " : "phia lo ") + DoubleToString(MathAbs(InpBEOffset), 2) + (InpBEUnit == BE_UNIT_PIPS ? " pip" : " gia") + " so voi gia vao)";
+  }
+
+  string BeGv(ulong id) {
+      return "OCEANBE_" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "_" + (string)id;
+  }
+
+  // Tang va tra ve so lan da thu cua tin hieu nay (de khong thu mai mai).
+  int BeBump(ulong id) {
+      for (int i = 0; i < g_beN; i++)
+          if (g_beId[i] == id) {
+              g_beTry[i]++;
+              return g_beTry[i];
+          }
+      if (g_beN < 64) {
+          g_beId[g_beN] = id;
+          g_beTry[g_beN] = 1;
+          g_beN++;
+          return 1;
+      }
+      for (int i = 1; i < 64; i++) {
+          g_beId[i - 1] = g_beId[i];
+          g_beTry[i - 1] = g_beTry[i];
+      }
+      g_beId[63] = id;
+      g_beTry[63] = 1;
+      return 1;
+  }
+
+  // Doc id tin hieu va so TP tu comment "<InpComment>#<id>/TP<n>". false = khong phai lenh cua EA.
+  bool ParseComment(string cm, ulong& id, int& tpn) {
+      string pre = InpComment + "#";
+      int pl = StringLen(pre);
+      if (StringFind(cm, pre) != 0)
+          return false;
+      int slash = StringFind(cm, "/TP", pl);
+      if (slash < 0)
+          return false;
+      long v = StringToInteger(StringSubstr(cm, pl, slash - pl));
+      long t = StringToInteger(StringSubstr(cm, slash + 3));
+      if (v <= 0 || t < 1 || t > 3)
+          return false;
+      id = (ulong)v;
+      tpn = (int)t;
+      return true;
+  }
+
+  double BeOffsetPrice(string sym) {
+      double off = MathAbs(InpBEOffset);
+      if (InpBEUnit == BE_UNIT_PIPS)
+          off = off * SymbolInfoDouble(sym, SYMBOL_POINT) * 10.0;
+      return off;
+  }
+
+  // 1 = lenh TPn cua tin hieu da dong do cham TP; 0 = dong vi ly do khac (SL, dong tay...); -1 = chua thay trong lich su.
+  int TpClosedByTp(ulong id, int n) {
+      if (!HistorySelect(TimeCurrent() - 7 * 86400, TimeCurrent() + 60))
+          return -1;
+      string want = InpComment + "#" + (string)id + "/TP" + IntegerToString(n);
+      int total = HistoryDealsTotal();
+      for (int i = total - 1; i >= 0; i--) {
+          ulong d = HistoryDealGetTicket(i);
+          if (d == 0)
+              continue;
+          if (HistoryDealGetInteger(d, DEAL_MAGIC) != InpMagic)
+              continue;
+          if (HistoryDealGetInteger(d, DEAL_ENTRY) != DEAL_ENTRY_IN)
+              continue;
+          if (HistoryDealGetString(d, DEAL_COMMENT) != want)
+              continue;
+          long pid = HistoryDealGetInteger(d, DEAL_POSITION_ID);
+          for (int j = total - 1; j >= 0; j--) {
+              ulong o = HistoryDealGetTicket(j);
+              if (o == 0 || HistoryDealGetInteger(o, DEAL_POSITION_ID) != pid)
+                  continue;
+              long en = HistoryDealGetInteger(o, DEAL_ENTRY);
+              if (en == DEAL_ENTRY_OUT || en == DEAL_ENTRY_INOUT || en == DEAL_ENTRY_OUT_BY)
+                  return (HistoryDealGetInteger(o, DEAL_REASON) == DEAL_REASON_TP) ? 1 : 0;
+          }
+          return -1;
+      }
+      return -1;
+  }
+
+  // Doi SL cac lenh con mo (so TP > n) cua tin hieu. true = moi lenh da o SL moi hoac tot hon.
+  bool ApplyBreakEven(ulong id, int n) {
+      bool allOk = true;
+      for (int i = PositionsTotal() - 1; i >= 0; i--) {
+          ulong tk = PositionGetTicket(i);
+          if (tk == 0 || !PositionSelectByTicket(tk))
+              continue;
+          if (PositionGetInteger(POSITION_MAGIC) != InpMagic)
+              continue;
+          ulong pid;
+          int tpn;
+          if (!ParseComment(PositionGetString(POSITION_COMMENT), pid, tpn) || pid != id || tpn <= n)
+              continue;
+
+          string sym = PositionGetString(POSITION_SYMBOL);
+          bool buy = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
+          double open = PositionGetDouble(POSITION_PRICE_OPEN);
+          double curSl = PositionGetDouble(POSITION_SL);
+          double tp = PositionGetDouble(POSITION_TP);
+          double pt = SymbolInfoDouble(sym, SYMBOL_POINT);
+          int dg = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+          double off = BeOffsetPrice(sym);
+          double want = buy ? (InpBELockProfit ? open + off : open - off) : (InpBELockProfit ? open - off : open + off);
+          want = NormalizeDouble(want, dg);
+
+          // SL hien tai da tot hon hoac bang muc moi: khong dong vao (khong bao gio keo SL ra xa).
+          if (curSl > 0 && (buy ? curSl >= want - pt / 2 : curSl <= want + pt / 2))
+              continue;
+
+          // SL moi phai cach gia thi truong it nhat stops level (BUY: duoi Bid, SELL: tren Ask).
+          double minDist = (double)SymbolInfoInteger(sym, SYMBOL_TRADE_STOPS_LEVEL) * pt;
+          double bid = SymbolInfoDouble(sym, SYMBOL_BID), ask = SymbolInfoDouble(sym, SYMBOL_ASK);
+          bool valid = buy ? (want < bid - minDist) : (want > ask + minDist);
+          if (!valid) {
+              allOk = false;
+              continue;
+          }
+
+          if (g_trade.PositionModify(tk, want, tp) && (g_trade.ResultRetcode() == TRADE_RETCODE_DONE || g_trade.ResultRetcode() == TRADE_RETCODE_PLACED))
+              Print("OceanRelay BREAKEVEN: #", id, " TP", tpn, " ticket ", tk, " SL ", DoubleToString(curSl, dg), " -> ", DoubleToString(want, dg));
+          else {
+              allOk = false;
+              Print("OceanRelay BREAKEVEN: doi SL ticket ", tk, " that bai retcode=", g_trade.ResultRetcode(), " ", g_trade.ResultRetcodeDescription());
+          }
+      }
+      return allOk;
+  }
+
+  // Chay moi giay. Nhe khi khong co viec: chi quet danh sach vi the dang mo.
+  void ManageBreakEven() {
+      if (!InpBEEnable || !InpAllowTrading)
+          return;
+      if (!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED))
+          return;
+      int trig = (int)InpBETrigger;
+
+      ulong ids[32];
+      int mask[32]; // bit (n-1) = lenh TPn cua tin hieu dang con mo
+      int cnt = 0;
+      for (int i = 0; i < PositionsTotal(); i++) {
+          ulong tk = PositionGetTicket(i);
+          if (tk == 0 || !PositionSelectByTicket(tk))
+              continue;
+          if (PositionGetInteger(POSITION_MAGIC) != InpMagic)
+              continue;
+          ulong id;
+          int tpn;
+          if (!ParseComment(PositionGetString(POSITION_COMMENT), id, tpn))
+              continue;
+          int g = -1;
+          for (int k = 0; k < cnt; k++)
+              if (ids[k] == id) {
+                  g = k;
+                  break;
+              }
+          if (g < 0) {
+              if (cnt >= 32)
+                  continue;
+              g = cnt++;
+              ids[g] = id;
+              mask[g] = 0;
+          }
+          mask[g] |= (1 << (tpn - 1));
+      }
+
+      for (int g = 0; g < cnt; g++) {
+          bool trigOpen = ((mask[g] >> (trig - 1)) & 1) != 0;
+          bool laterOpen = (mask[g] >> trig) != 0; // con lenh co so TP lon hon trig
+          if (trigOpen || !laterOpen)
+              continue; // chua toi luc, hoac khong con lenh nao de doi
+          ulong id = ids[g];
+          if (GlobalVariableCheck(BeGv(id)))
+              continue; // da xu ly (xong hoac bo qua)
+
+          int r = TpClosedByTp(id, trig);
+          if (r == 0) {
+              GlobalVariableSet(BeGv(id), 0);
+              Print("OceanRelay BREAKEVEN: #", id, " lenh TP", trig, " dong khong phai do cham TP -> khong doi SL");
+              continue;
+          }
+          if (r == 1 && ApplyBreakEven(id, trig)) {
+              GlobalVariableSet(BeGv(id), 1);
+              continue;
+          }
+          if (BeBump(id) >= BE_MAX_TRY) {
+              GlobalVariableSet(BeGv(id), 0);
+              Print("OceanRelay BREAKEVEN: #", id, " bo cuoc sau ", BE_MAX_TRY, " lan thu (",
+                    r < 0 ? "khong thay deal dong TP trong lich su" : "SL moi khong hop le/bi san tu choi", ")");
+          }
+      }
+  }
+
 void UpdateComment(bool ok)
   {
-   Comment("OceanRelay ", EA_VER, InpAllowTrading ? "  [DANH LENH: BAT]" : "  [CHI THEO DOI]", "\n",
-           ok ? "Gateway: OK" : "Gateway: LOI (xem tab Experts)", "\n",
-           "Tin hieu cuoi: ", g_last);
+    Comment("OceanRelay ", EA_VER, InpAllowTrading ? "  [DANH LENH: BAT]" : "  [CHI THEO DOI]", "\n",
+            ok ? "Gateway: OK" : "Gateway: LOI (xem tab Experts)", "\n",
+            "BreakEven: ", BeLabel(), "\n",
+            "Tin hieu cuoi: ", g_last);
   }
