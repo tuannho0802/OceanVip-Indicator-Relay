@@ -29,10 +29,10 @@ $src = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path "$src\dist\gateway.mjs")) { throw "Không thấy $src\dist\gateway.mjs." }
 $node = if (Test-Path "$src\node.exe") { "$src\node.exe" } else { (Get-Command node -ErrorAction Stop).Source }
 
+. "$PSScriptRoot\port-lib.ps1"
 Stop-ScheduledTask -TaskName 'Ocean Relay Gateway' -ErrorAction SilentlyContinue
 # Chỉ dừng Gateway của OCEAN (nằm trong thư mục cài này), KHÔNG đụng Gateway khác cùng máy (ví dụ AZ Sentinel cũng chạy node.exe).
-Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($InstallDir, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and $_.CommandLine -like '*gateway.mjs*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
-. "$PSScriptRoot\port-lib.ps1"
+Stop-OceanProcesses $InstallDir 'gateway.mjs'
 # Không ai chỉ định cổng: nếu cổng mặc định đang bị chương trình khác giữ thì tự lấy cổng rảnh kế tiếp.
 if ($autoPort) {
   $free = Get-FreeGatewayPort $defaultGwPort $InstallDir
@@ -44,8 +44,8 @@ try {
   if ($busy) { Write-Host "CHÚ Ý: cổng $Port đang bị chương trình khác dùng (PID $($busy.OwningProcess)). Mở $ServerUrl/#setup > Nâng cao và đổi Cổng Gateway." -ForegroundColor Yellow }
 } catch { }
 New-Item -ItemType Directory -Force $InstallDir | Out-Null
-Copy-Item "$src\dist\gateway.mjs" $InstallDir -Force
-Copy-Item $node "$InstallDir\node.exe" -Force
+Copy-Retry "$src\dist\gateway.mjs" $InstallDir
+Copy-Retry $node "$InstallDir\node.exe"
 $envFile = "$InstallDir\gateway.env"
 @"
 OCEAN_SERVER_URL=$ServerUrl

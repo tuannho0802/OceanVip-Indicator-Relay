@@ -18,22 +18,22 @@ $env:NODE_SKIP_PLATFORM_CHECK = '1'
 $ver = [version](& $node -p "process.versions.node")
 if ($ver -lt [version]'22.13.0') { throw "Cần Node 22.13 trở lên (đang là $ver)." }
 
-# Dừng bản cũ trước khi ghi đè (nâng cấp tại chỗ).
+. "$PSScriptRoot\port-lib.ps1"
+# Dừng bản cũ trước khi ghi đè (nâng cấp tại chỗ). Chỉ dừng Server của OCEAN (nằm trong thư mục cài này), không đụng tiến trình node khác cùng máy.
 Stop-ScheduledTask -TaskName 'Ocean Relay Server' -ErrorAction SilentlyContinue
-# Chỉ dừng Server của OCEAN (nằm trong thư mục cài này), không đụng tiến trình node khác cùng máy.
-Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($InstallDir, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and $_.CommandLine -like '*server.mjs*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+Stop-OceanProcesses $InstallDir 'server.mjs'
 
 New-Item -ItemType Directory -Force $InstallDir, "$env:ProgramData\OceanRelay\logs" | Out-Null
-Copy-Item "$src\dist", "$src\web" $InstallDir -Recurse -Force
-Copy-Item "$src\scripts\init-env.ps1" $InstallDir -Force
+Copy-Retry "$src\dist" $InstallDir -Recurse
+Copy-Retry "$src\web" $InstallDir -Recurse
+Copy-Retry "$src\scripts\init-env.ps1" $InstallDir
 # Kèm scripts/ea/docs vào thư mục cài: gỡ tác vụ, cài Gateway, kiểm tra VPS và lấy EA đều chạy từ đây (cả khi gỡ bằng bộ cài).
-foreach ($d in 'scripts', 'ea', 'docs') { if (Test-Path "$src\$d") { Copy-Item "$src\$d" $InstallDir -Recurse -Force } }
-Copy-Item $node "$InstallDir\node.exe" -Force
+foreach ($d in 'scripts', 'ea', 'docs') { if (Test-Path "$src\$d") { Copy-Retry "$src\$d" $InstallDir -Recurse } }
+Copy-Retry $node "$InstallDir\node.exe"
 # Dữ liệu và log: chỉ SYSTEM + Administrators.
 icacls "$env:ProgramData\OceanRelay" /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
 # Cổng Gateway: tham số > trang Cài đặt (settings.json) > OCEAN_GW_PORT cũ trong server.env. Chưa ai đặt thì tự dò: 47860 bận (ví dụ AZ Sentinel)
 # thì lấy cổng rảnh kế tiếp và ghi vào server.env để Server + Gateway + EA thống nhất.
-. "$PSScriptRoot\port-lib.ps1"
 if (-not $NoGateway -and $GatewayPort -le 0) {
   $known = 0
   try { $sj0 = Get-Content "$env:ProgramData\OceanRelay\settings.json" -Raw -ErrorAction Stop | ConvertFrom-Json; if ($sj0.gatewayPort) { $known = [int]$sj0.gatewayPort } } catch { }

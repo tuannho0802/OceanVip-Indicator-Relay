@@ -156,6 +156,20 @@ begin
   SetEnvironmentVariableW('NODE_SKIP_PLATFORM_CHECK', '1');
 end;
 
+{ 8 dong cuoi cua install.log de hien ngay trong hop thoai loi (khoi phai mo file). }
+function LogTail(const F: String): String;
+var
+  L: TArrayOfString;
+  I, S: Integer;
+begin
+  Result := '';
+  if not LoadStringsFromFile(F, L) then Exit;
+  S := GetArrayLength(L) - 8;
+  if S < 0 then S := 0;
+  for I := S to GetArrayLength(L) - 1 do
+    if Trim(L[I]) <> '' then Result := Result + L[I] + #13#10;
+end;
+
 { Chay scripts\install-server.ps1 tu goi da giai nen. Loi (throw) -> ma thoat khac 0, ghi vao logs\install.log. }
 procedure RunInstallScript;
 var
@@ -187,7 +201,7 @@ begin
   RC := 1;
   Exec(ExpandConstant('{cmd}'), '/S /C ""powershell.exe" ' + Args + ' > "' + LogFile + '" 2>&1"', Pkg, SW_HIDE, ewWaitUntilTerminated, RC);
   if RC <> 0 then
-    SuppressibleMsgBox('Cai khong thanh cong (ma ' + IntToStr(RC) + '). Xem chi tiet: ' + LogFile, mbError, MB_OK, IDOK);
+    SuppressibleMsgBox('Cai khong thanh cong (ma ' + IntToStr(RC) + '). Xem chi tiet: ' + LogFile + #13#10#13#10 + LogTail(LogFile), mbError, MB_OK, IDOK);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
