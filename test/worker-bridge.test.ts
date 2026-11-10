@@ -290,16 +290,16 @@ describe('Tự chữa khi Worker giữ địa chỉ tunnel cũ/đã chết (HTTP
     expect(seen).toEqual([null])
   })
 
-  it('đẩy đang hụt → Worker gợi ý kéo mỗi 10 giây; khỏe lại thì thôi gợi ý; Server không bao giờ kéo thưa hơn cấu hình', async () => {
+  it('đẩy đang hụt → Worker gợi ý kéo mỗi 30 giây; khỏe lại thì thôi gợi ý; Server không bao giờ kéo thưa hơn cấu hình', async () => {
     const pull = async () => j(await call('/api/pull', { headers: { authorization: `Bearer ${(await codeOf())?.key}`, 'x-ocean-server': sid } }))
     expect((await pull()).poll).toBeUndefined() // có địa chỉ, chưa có lần đẩy hụt nào
     serverSkew = 1000
     await fire()
     await settle() // đẩy hụt: bad_time
-    expect(await pull()).toMatchObject({ poll: 10, tunnel: VPS })
+    expect(await pull()).toMatchObject({ poll: 30, tunnel: VPS })
     const sync = await mkSync(300)
     await sync.pullOnce()
-    expect(sync.effectivePollSec()).toBe(10)
+    expect(sync.effectivePollSec()).toBe(30)
     const fast = await mkSync(5)
     await fast.pullOnce()
     expect(fast.effectivePollSec()).toBe(5)
@@ -316,13 +316,13 @@ describe('Tự chữa khi Worker giữ địa chỉ tunnel cũ/đã chết (HTTP
   it('Worker chưa có địa chỉ để đẩy → gợi ý kéo dày ngay', async () => {
     await tunnel(null)
     const r = await j(await call('/api/pull', { headers: { authorization: `Bearer ${(await codeOf())?.key}`, 'x-ocean-server': sid } }))
-    expect(r).toMatchObject({ poll: 10, tunnel: null })
+    expect(r).toMatchObject({ poll: 30, tunnel: null })
   })
 })
 
 describe('Server kéo dày khi tunnel rớt (không phụ thuộc Worker đã cập nhật hay chưa)', () => {
   const quiet = { debug() {}, info() {}, warn() {}, error() {} }
-  it('mất địa chỉ công khai: kéo NGAY và chuyển sang nhịp 10 giây; có địa chỉ lại thì về chu kỳ cấu hình', async () => {
+  it('mất địa chỉ công khai: kéo NGAY và chuyển sang nhịp 30 giây; có địa chỉ lại thì về chu kỳ cấu hình', async () => {
     const code = decodeConnectCode((await j(await send('GET', `/api/servers/${sid}/code`, undefined, admin))).code as string)
     let pulls = 0
     const toWorker = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -339,10 +339,44 @@ describe('Server kéo dày khi tunnel rớt (không phụ thuộc Worker đã c�
     sync.setPublicUrl(null) // tunnel rớt
     await new Promise((r) => setTimeout(r, 100))
     expect(pulls).toBeGreaterThan(before)
-    expect(sync.effectivePollSec()).toBe(10)
+    expect(sync.effectivePollSec()).toBe(30)
     sync.setPublicUrl(VPS) // tunnel mới thông
     await new Promise((r) => setTimeout(r, 60))
     expect(sync.effectivePollSec()).toBe(300)
+    sync.stop()
+  })
+})
+
+describe('Server báo địa chỉ tunnel lên Worker: lỗi thì tự thử lại, không đợi nhịp kéo 300 giây', () => {
+  const quiet = { debug() {}, info() {}, warn() {}, error() {} }
+  it('lần báo đầu hụt (mạng/HTTP 5xx) → thử lại sau vài giây tới khi Worker nhận; không bao giờ có hai lần báo chồng nhau', async () => {
+    const code = decodeConnectCode((await j(await send('GET', `/api/servers/${sid}/code`, undefined, admin))).code as string)
+    let tunnelPosts = 0
+    let inflight = 0
+    let maxInflight = 0
+    const toWorker = (async (input: string | URL | Request, init?: RequestInit) => {
+      const u = String(input).slice(WORKER.length)
+      if (u === '/api/tunnel') {
+        tunnelPosts++
+        inflight++
+        maxInflight = Math.max(maxInflight, inflight)
+        await new Promise((r) => setTimeout(r, 5))
+        inflight--
+        if (tunnelPosts === 1) throw new Error('fetch failed')
+        if (tunnelPosts === 2) return new Response('bad gateway', { status: 502 })
+      }
+      return call(u, init)
+    }) as typeof fetch
+    const sync = new WorkerSync({ workerUrl: WORKER, syncKey: code?.key ?? '', serverId: sid, pollSec: 300, log: quiet, ingest: app.ingestFromWorker, fetchFn: toWorker, clock: () => now, reportRetrySec: [0.02] })
+    sync.start(false) // nhịp kéo kế tiếp ở 300 giây nữa: chỉ có thể thành công nếu tự thử lại
+    sync.setPublicUrl(VPS)
+    sync.setPublicUrl(VPS)
+    for (let i = 0; i < 100 && tunnelPosts < 3; i++) await new Promise((r) => setTimeout(r, 20))
+    await new Promise((r) => setTimeout(r, 60))
+    expect(tunnelPosts).toBe(3) // hụt, hụt, rồi được
+    expect(maxInflight).toBe(1)
+    const r = await j(await call('/api/pull', { headers: { authorization: `Bearer ${code?.key}`, 'x-ocean-server': sid } }))
+    expect(r).toMatchObject({ tunnel: VPS })
     sync.stop()
   })
 })

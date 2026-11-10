@@ -210,8 +210,8 @@ describe('QuickTunnel', () => {
       killStale: () => {},
       backoffMs: [5],
       healthEveryMs: 10,
-      connectEveryMs: 10,
       graceMs: 0,
+      announceAfterMs: 100_000,
       ...extra,
     })
     tunnels.push(t)
@@ -220,128 +220,143 @@ describe('QuickTunnel', () => {
   const REG = 'INF Registered tunnel connection connIndex=0 connection=abc event=0 ip=1.2.3.4 location=sgn01 protocol=quic\n'
   const UNREG = 'INF Unregistered tunnel connection connIndex=0\n'
 
-  it('địa chỉ chỉ được báo cho Worker SAU KHI tunnel thật sự thông (cloudflared in địa chỉ trước khi nối tới Cloudflare)', async () => {
+  it('địa chỉ chỉ được báo sau khi cloudflared nối tới Cloudflare (dòng Registered) và KHÔNG gọi thử địa chỉ mới (tránh DNS của VPS nhớ "không tồn tại")', async () => {
     const n = net({ v: 'dead' })
-    const { t, sp, changes, urlFile } = make({ fetchFn: n.fetchFn })
+    const { t, sp, changes, urlFile } = make({ fetchFn: n.fetchFn, graceMs: 100_000 })
     t.start()
     await tick()
     sp.procs[0]?.stderr.write('INF |  https://one-aaa.trycloudflare.com  |\n')
     await tick(60)
-    expect(t.url()).toBeNull() // chưa thông: chưa báo, chưa ghi tệp
+    expect(t.url()).toBeNull() // chưa nối: chưa báo, chưa ghi tệp
     expect(changes).toEqual([])
     expect(existsSync(urlFile)).toBe(false)
     expect(t.status()).toMatchObject({ state: 'connecting', url: null, lastUrl: 'https://one-aaa.trycloudflare.com' })
-    n.mode.v = 'ok'
-    await tick(60)
+    sp.procs[0]?.stderr.write(REG)
+    await tick(30)
     expect(t.url()).toBe('https://one-aaa.trycloudflare.com')
     expect(changes).toEqual(['https://one-aaa.trycloudflare.com'])
     expect(readFileSync(urlFile, 'utf8').trim()).toBe('https://one-aaa.trycloudflare.com')
-    expect(t.status()).toMatchObject({ state: 'ok', url: 'https://one-aaa.trycloudflare.com' })
-    expect(n.calls[0]).toBe('https://one-aaa.trycloudflare.com/api/health')
+    expect(t.status()).toMatchObject({ state: 'ok', connections: 1 })
+    expect(n.calls).toEqual([]) // không một lần gọi thử nào trong cả quá trình
+  })
+
+  it('log không có dòng Registered (bản cloudflared khác định dạng): vẫn báo sau announceAfterMs, không gọi thử', async () => {
+    const n = net({ v: 'dead' })
+    const { t, sp, changes } = make({ fetchFn: n.fetchFn, graceMs: 100_000, announceAfterMs: 40 })
+    t.start()
+    await tick()
+    sp.procs[0]?.stderr.write('https://one-aaa.trycloudflare.com\n')
+    await tick(10)
+    expect(changes).toEqual([])
+    await tick(80)
+    expect(changes).toEqual(['https://one-aaa.trycloudflare.com'])
+    expect(n.calls).toEqual([])
   })
 
   it('cloudflared thoát thì báo null, chạy lại và nhận địa chỉ MỚI', async () => {
     const { t, sp, changes, urlFile } = make({ fetchFn: net().fetchFn, healthEveryMs: 100_000 })
     t.start()
     await tick()
-    sp.procs[0]?.stderr.write('https://one-aaa.trycloudflare.com\n')
+    sp.procs[0]?.stderr.write(`https://one-aaa.trycloudflare.com\n${REG}`)
     await tick(40)
     sp.procs[0]?.emit('exit', 1)
     await tick(60)
     expect(sp.procs).toHaveLength(2)
     expect(existsSync(urlFile)).toBe(false)
-    expect(t.status().restarts).toBe(1)
-    sp.procs[1]?.stdout.write('https://two-bbb.trycloudflare.com\n')
+    expect(t.status()).toMatchObject({ state: 'down', restarts: 1, lastUrl: 'https://one-aaa.trycloudflare.com' })
+    sp.procs[1]?.stdout.write(`https://two-bbb.trycloudflare.com\n${REG}`)
     await tick(40)
     expect(t.url()).toBe('https://two-bbb.trycloudflare.com')
     expect(changes).toEqual(['https://one-aaa.trycloudflare.com', null, 'https://two-bbb.trycloudflare.com'])
   })
 
-  it('địa chỉ mãi không thông (Cloudflare 1033) thì bỏ và chạy lại để xin địa chỉ khác, không bao giờ báo địa chỉ chết', async () => {
-    const { t, sp, changes } = make({ fetchFn: net({ v: 'dead' }).fetchFn, connectTimeoutMs: 30 })
-    t.start()
-    await tick()
-    sp.procs[0]?.stderr.write('https://dead-ccc.trycloudflare.com\n' + REG)
-    await tick(150)
-    expect(sp.procs[0]?.killed).toBe(true)
-    expect(sp.procs.length).toBeGreaterThanOrEqual(2)
-    expect(changes).toEqual([]) // chưa từng báo địa chỉ chết cho Worker
-  })
-
-  it('VPS không tự gọi được địa chỉ (DNS/mạng) nhưng cloudflared báo đã nối: tin cloudflared sau thời gian chờ thay vì chạy lại vô tận', async () => {
-    const { t, sp, changes } = make({ fetchFn: net({ v: 'throw' }).fetchFn, connectTimeoutMs: 30 })
-    t.start()
-    await tick()
-    sp.procs[0]?.stderr.write('https://dns-ddd.trycloudflare.com\n' + REG)
-    await tick(100)
-    expect(sp.procs[0]?.killed).toBe(false)
-    expect(changes).toEqual(['https://dns-ddd.trycloudflare.com'])
-  })
-
-  it('đang chạy mà tunnel chết: 2 lần kiểm hỏng thì báo null cho Worker NGAY, đủ lần thì giết để xin địa chỉ mới', async () => {
+  it('tunnel khỏe thì không bị khởi động lại, có ghi độ trễ lần kiểm', async () => {
     const n = net()
-    const { t, sp, changes } = make({ fetchFn: n.fetchFn, maxFails: 4, healthEveryMs: 15 })
+    const { t, sp } = make({ fetchFn: n.fetchFn })
     t.start()
     await tick()
-    sp.procs[0]?.stderr.write('https://live-eee.trycloudflare.com\n')
-    await tick(60)
-    expect(changes).toEqual(['https://live-eee.trycloudflare.com'])
-    n.mode.v = 'dead'
-    await tick(50)
-    expect(changes).toEqual(['https://live-eee.trycloudflare.com', null])
-    expect(t.status().state).toBe('down')
-    expect(t.status().lastUrl).toBe('https://live-eee.trycloudflare.com')
-    expect(t.status().error).toMatch(/530/)
-    await tick(120)
-    expect(sp.procs[0]?.killed).toBe(true)
-  })
-
-  it('cloudflared báo mất hết kết nối (log Unregistered): báo null ngay không đợi kiểm tra; nối lại và thông thì báo lại địa chỉ', async () => {
-    const n = net()
-    const { t, sp, changes } = make({ fetchFn: n.fetchFn, healthEveryMs: 25, downRestartMs: 100_000 })
-    t.start()
-    await tick()
-    sp.procs[0]?.stderr.write('https://log-fff.trycloudflare.com\n' + REG + REG)
-    await tick(50)
-    expect(changes).toEqual(['https://log-fff.trycloudflare.com'])
-    n.mode.v = 'dead'
-    sp.procs[0]?.stderr.write(UNREG) // còn 1 kết nối: chưa coi là rớt
-    await tick(5)
-    expect(t.status().state).toBe('ok')
-    sp.procs[0]?.stderr.write(UNREG)
-    await tick(5)
-    expect(t.status()).toMatchObject({ state: 'down', connections: 0 })
-    expect(changes).toEqual(['https://log-fff.trycloudflare.com', null])
-    n.mode.v = 'ok'
-    sp.procs[0]?.stderr.write(REG)
-    await tick(60)
-    expect(t.status().state).toBe('ok')
-    expect(changes).toEqual(['https://log-fff.trycloudflare.com', null, 'https://log-fff.trycloudflare.com'])
-  })
-
-  it('tunnel khỏe thì không bị khởi động lại', async () => {
-    const n = net()
-    const { t, sp } = make({ fetchFn: n.fetchFn, maxFails: 2 })
-    t.start()
-    await tick()
-    sp.procs[0]?.stderr.write('https://ok-ddd.trycloudflare.com\n')
+    sp.procs[0]?.stderr.write(`https://ok-ddd.trycloudflare.com\n${REG}`)
     await tick(120)
     expect(n.calls.length).toBeGreaterThan(1)
+    expect(n.calls[0]).toBe('https://ok-ddd.trycloudflare.com/api/health')
     expect(sp.procs).toHaveLength(1)
     expect(sp.procs[0]?.killed).toBe(false)
     expect(t.status()).toMatchObject({ state: 'ok', restarts: 0 })
     expect(typeof t.status().rttMs).toBe('number')
   })
 
+  it('chập chờn không làm tunnel đổi: vài lần kiểm hỏng xen kẽ thì KHÔNG báo null cho Worker và KHÔNG chạy lại', async () => {
+    const mode = { v: 'ok' as 'ok' | 'dead' | 'throw' }
+    const n = net(mode)
+    const { t, sp, changes } = make({ fetchFn: n.fetchFn, maxFails: 3, healthEveryMs: 15 })
+    t.start()
+    await tick()
+    sp.procs[0]?.stderr.write(`https://flaky-eee.trycloudflare.com\n${REG}`)
+    await tick(10)
+    for (let i = 0; i < 4; i++) {
+      mode.v = 'dead'
+      await tick(20) // khoảng 1 lần kiểm hỏng (chưa tới ngưỡng 3)
+      mode.v = 'ok'
+      await tick(50) // kiểm lại thông: đếm hỏng về 0
+    }
+    expect(sp.procs).toHaveLength(1)
+    expect(sp.procs[0]?.killed).toBe(false)
+    expect(changes).toEqual(['https://flaky-eee.trycloudflare.com'])
+    expect(t.status().state).toBe('ok')
+  })
+
+  it('hỏng HẲN (Cloudflare 530/1033) đủ số lần liên tiếp thì giết cloudflared và xin địa chỉ mới', async () => {
+    const n = net({ v: 'dead' })
+    const { t, sp, changes } = make({ fetchFn: n.fetchFn, maxFails: 3 })
+    t.start()
+    await tick()
+    sp.procs[0]?.stderr.write(`https://dead-fff.trycloudflare.com\n${REG}`)
+    await tick(150)
+    expect(sp.procs[0]?.killed).toBe(true)
+    expect(sp.procs.length).toBeGreaterThanOrEqual(2)
+    expect(changes.slice(0, 2)).toEqual(['https://dead-fff.trycloudflare.com', null])
+    expect(t.status().restarts).toBeGreaterThanOrEqual(1)
+  })
+
+  it('VPS không tự gọi được địa chỉ (DNS/mạng) nhưng cloudflared vẫn còn kết nối: không giết tunnel, không đổi địa chỉ', async () => {
+    const n = net({ v: 'throw' })
+    const { t, sp, changes } = make({ fetchFn: n.fetchFn, maxFails: 2 })
+    t.start()
+    await tick()
+    sp.procs[0]?.stderr.write(`https://dns-ggg.trycloudflare.com\n${REG}`)
+    await tick(150)
+    expect(n.calls.length).toBeGreaterThan(3)
+    expect(sp.procs).toHaveLength(1)
+    expect(sp.procs[0]?.killed).toBe(false)
+    expect(changes).toEqual(['https://dns-ggg.trycloudflare.com'])
+    expect(t.status().error).toMatch(/không gọi được tunnel/)
+  })
+
+  it('log Unregistered tunnel connection (cloudflared tự nối lại từng kết nối) KHÔNG làm báo null cho Worker', async () => {
+    const { t, sp, changes } = make({ fetchFn: net().fetchFn, healthEveryMs: 100_000 })
+    t.start()
+    await tick()
+    sp.procs[0]?.stderr.write(`https://stay-hhh.trycloudflare.com\n${REG}${REG}`)
+    await tick(30)
+    sp.procs[0]?.stderr.write(UNREG + UNREG) // mất hết kết nối trong chốc lát
+    await tick(30)
+    expect(t.url()).toBe('https://stay-hhh.trycloudflare.com')
+    expect(t.status()).toMatchObject({ state: 'ok', connections: 0 })
+    sp.procs[0]?.stderr.write(REG)
+    await tick(30)
+    expect(changes).toEqual(['https://stay-hhh.trycloudflare.com'])
+    expect(sp.procs).toHaveLength(1)
+  })
+
   it('log bị cắt giữa dòng (địa chỉ và dòng Registered đến từng mảnh) vẫn đọc đúng', async () => {
-    const { t, sp } = make({ fetchFn: net({ v: 'dead' }).fetchFn })
+    const { t, sp } = make({ fetchFn: net({ v: 'dead' }).fetchFn, graceMs: 100_000 })
     t.start()
     await tick()
     sp.procs[0]?.stderr.write('INF |  https://split-ggg.try')
     sp.procs[0]?.stderr.write('cloudflare.com  |\nINF Regis')
     sp.procs[0]?.stderr.write('tered tunnel connection connIndex=0\n')
     await tick(30)
-    expect(t.status()).toMatchObject({ lastUrl: 'https://split-ggg.trycloudflare.com', connections: 1 })
+    expect(t.status()).toMatchObject({ state: 'ok', url: 'https://split-ggg.trycloudflare.com', connections: 1 })
   })
 
   it('dọn cloudflared sót đúng một lần khi bắt đầu, trước khi chạy tiến trình mới', async () => {

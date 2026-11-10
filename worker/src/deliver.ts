@@ -101,7 +101,7 @@ export async function readDiag(env: Env, id: string): Promise<PushDiag | null> {
 }
 
 /** Đẩy đang hụt (hoặc Worker chưa có địa chỉ VPS): bảo Server kéo bù dày hơn chu kỳ cấu hình cho tới khi đẩy được lại. */
-export const FAST_POLL_SEC = 10
+export const FAST_POLL_SEC = 30
 const FAST_POLL_WINDOW_SEC = 900
 
 /**

@@ -152,7 +152,7 @@ export type QuickTunnelOptions = {
   /** Tệp ghi địa chỉ tunnel hiện tại (để người vận hành xem). */
   urlFile: string
   log: Logger
-  /** Gọi mỗi khi địa chỉ đổi: chuỗi (tunnel ĐÃ thông, dùng được) hoặc null (tunnel vừa rớt/đang tạo lại). */
+  /** Gọi mỗi khi địa chỉ đổi: chuỗi (địa chỉ mới, đã báo được) hoặc null (cloudflared vừa thoát / bị chạy lại). */
   onChange: (url: string | null) => void
   /** Chỉ để kiểm thử. */
   spawnFn?: typeof spawn
@@ -162,44 +162,40 @@ export type QuickTunnelOptions = {
   managedBin?: boolean
   /** Dọn cloudflared sót từ lần trước, gọi một lần khi bắt đầu. Mặc định `killStaleCloudflared`. */
   killStale?: (binPath: string) => void
-  /** Chu kỳ kiểm tra tunnel còn thông khi đang chạy ổn (ms). Mặc định 20 giây. */
+  /** Chu kỳ tự kiểm tra tunnel còn thông (ms). Mặc định 60 giây. */
   healthEveryMs?: number
-  /** Chu kỳ thử kết nối khi tunnel mới có địa chỉ mà chưa thông (ms). Mặc định 2 giây. */
-  connectEveryMs?: number
-  /** Chờ chừng này sau khi tunnel đã báo thông (ok) mới bắt đầu tính lần kiểm hỏng. */
+  /** Sau khi báo địa chỉ, chờ chừng này mới bắt đầu kiểm (ms). Mặc định 30 giây. */
   graceMs?: number
-  /** Số lần kiểm hỏng liên tiếp thì khởi động lại cloudflared. */
+  /** Có địa chỉ mà chưa thấy cloudflared báo "Registered tunnel connection" thì vẫn báo cho Worker sau chừng này (ms). Mặc định 15 giây. */
+  announceAfterMs?: number
+  /** Số lần kiểm hỏng LIÊN TIẾP thì khởi động lại cloudflared. Mặc định 3. */
   maxFails?: number
-  /** Địa chỉ mới có mà quá chừng này (ms) vẫn chưa thông thì bỏ, chạy lại để xin địa chỉ khác. Mặc định 90 giây. */
-  connectTimeoutMs?: number
-  /** Tunnel đã rớt quá chừng này (ms) mà chưa tự thông lại thì chạy lại để xin địa chỉ mới. Mặc định 45 giây. */
-  downRestartMs?: number
   /** Thời gian chờ trước lần chạy lại (ms), tăng dần rồi giữ ở mức cuối. */
   backoffMs?: number[]
 }
 
 /**
- * starting   : cloudflared đang chạy, chưa có địa chỉ.
- * connecting : đã có địa chỉ nhưng CHƯA chứng minh được là thông (chưa báo cho Worker).
- * ok         : thông (đã báo địa chỉ cho Worker).
- * down       : từng thông nhưng vừa rớt (đã báo "không có" cho Worker); đang chờ tự thông lại hoặc chạy lại.
+ * starting   : chưa có địa chỉ (mới khởi động).
+ * connecting : cloudflared đã in địa chỉ, đang đợi nó nối tới Cloudflare (chưa báo Worker).
+ * ok         : đã báo địa chỉ cho Worker.
+ * down       : cloudflared vừa thoát/bị chạy lại, đang chờ địa chỉ mới (`lastUrl` là địa chỉ cũ đã chết).
  */
 export type TunnelState = 'starting' | 'connecting' | 'ok' | 'down'
 export type TunnelStatus = {
   state: TunnelState
-  /** Địa chỉ đang dùng được (đã báo Worker); null khi chưa thông hoặc đã rớt. */
+  /** Địa chỉ đang dùng (đã báo Worker); null khi chưa có hoặc đã rớt. */
   url: string | null
-  /** Địa chỉ gần nhất cloudflared cấp (kể cả khi đã rớt), để hiện trên giao diện. */
+  /** Địa chỉ gần nhất cloudflared cấp (kể cả đã chết), để giao diện hiện được. */
   lastUrl: string | null
   /** Thời điểm (ms) vào trạng thái hiện tại. */
   since: number
   /** Số lần phải chạy lại cloudflared kể từ khi Server khởi động. */
   restarts: number
   error: string
-  /** Lần kiểm tra /api/health qua tunnel gần nhất (ms Unix; 0 = chưa) và độ trễ của nó. */
+  /** Lần kiểm tra /api/health qua tunnel gần nhất (ms Unix; 0 = chưa) và độ trễ của nó (null nếu lần đó hỏng). */
   checkedAt: number
   rttMs: number | null
-  /** Số kết nối đang mở từ cloudflared tới Cloudflare (đọc từ log; 0 khi chưa có). */
+  /** Số kết nối cloudflared → Cloudflare đọc từ log. Chỉ để HIỂN THỊ, không dùng để quyết định chạy lại. */
   connections: number
 }
 
@@ -207,27 +203,28 @@ export type TunnelStatus = {
  * Plan 3G: giữ một Quick Tunnel (`*.trycloudflare.com`) luôn chạy cho VPS. Địa chỉ đổi mỗi lần cloudflared chạy lại,
  * nên mỗi khi đổi, `onChange` được gọi để báo cho Worker (cửa trước cố định) biết chuyển tiếp tới đâu.
  *
- * Quan trọng: địa chỉ chỉ được báo (và hiện trên giao diện) SAU KHI tunnel thật sự thông. cloudflared in địa chỉ ngay khi xin được,
- * trước cả lúc nối tới Cloudflare; nếu báo sớm hoặc để địa chỉ chết nằm lại thì Worker đẩy vào đó và nhận HTTP 530 / lỗi 1033.
- * Tunnel rớt thì báo ngay "không có" cho Worker (Worker chuyển sang chờ VPS kéo) rồi tự tạo tunnel mới.
+ * Chính sách (theo AZ-Sentinel, đã chạy ổn): MỖI LẦN CHẠY LẠI LÀ MỘT ĐỊA CHỈ MỚI nên chỉ chạy lại khi thật sự cần:
+ *  - cloudflared tự thoát; hoặc
+ *  - `maxFails` lần kiểm LIÊN TIẾP (mỗi `healthEveryMs`) đều hỏng HẲN (Cloudflare trả 530/1033...).
+ * Không làm những việc từng khiến tunnel đổi liên tục:
+ *  - KHÔNG gọi thử địa chỉ vừa cấp: DNS của VPS nhớ "không tồn tại" cho tên mới, các lần gọi sau cũng hỏng mãi.
+ *  - KHÔNG suy diễn "rớt" từ log (Unregistered...) và KHÔNG báo null chỉ vì một lần kiểm hỏng: cloudflared tự nối lại từng kết nối.
+ *  - Gọi không ra phản hồi (DNS/mạng của chính VPS) mà cloudflared vẫn còn kết nối thì không tính là hỏng.
  */
 export class QuickTunnel {
   private current: string | null = null
   private proc: ChildProcess | null = null
   private stopped = true
   private timers = new Set<NodeJS.Timeout>()
+  private announceTimer: NodeJS.Timeout | null = null
   private wake: (() => void) | null = null
   private fails = 0
   private urlAt = 0
-  // --- trạng thái của lần chạy cloudflared hiện tại ---
   private state: TunnelState = 'starting'
   private stateAt = Date.now()
   private seenUrl: string | null = null
   private lastUrl: string | null = null
-  private seenAt = 0
   private conns = 0
-  private registered = false
-  private downAt = 0
   private buf = ''
   private checking = false
   private restarts = 0
@@ -237,7 +234,7 @@ export class QuickTunnel {
 
   constructor(private readonly opts: QuickTunnelOptions) {}
 
-  /** Địa chỉ đang dùng được (đã thông); null khi chưa thông hoặc đã rớt. */
+  /** Địa chỉ đang dùng (đã báo Worker); null khi chưa có hoặc đã rớt. */
   url(): string | null {
     return this.current
   }
@@ -260,23 +257,16 @@ export class QuickTunnel {
     if (!this.stopped) return
     this.stopped = false
     void this.loop()
-    const every = (ms: number, fn: () => void) => {
-      const t = setInterval(fn, ms)
-      t.unref()
-      this.timers.add(t)
-    }
-    every(this.opts.healthEveryMs ?? 20_000, () => {
-      if (this.state === 'ok' || this.state === 'down') void this.check()
-    })
-    every(this.opts.connectEveryMs ?? 2_000, () => {
-      if (this.state === 'connecting') void this.check()
-    })
+    const t = setInterval(() => void this.check(), this.opts.healthEveryMs ?? 60_000)
+    t.unref()
+    this.timers.add(t)
   }
 
   stop(): void {
     this.stopped = true
     for (const t of this.timers) clearInterval(t)
     this.timers.clear()
+    this.clearAnnounce()
     this.wake?.()
     this.proc?.kill()
   }
@@ -285,6 +275,11 @@ export class QuickTunnel {
     if (s === this.state) return
     this.state = s
     this.stateAt = Date.now()
+  }
+
+  private clearAnnounce(): void {
+    if (this.announceTimer) clearTimeout(this.announceTimer)
+    this.announceTimer = null
   }
 
   private async loop(): Promise<void> {
@@ -311,10 +306,15 @@ export class QuickTunnel {
         this.lastError = String(error).slice(0, 200)
         this.opts.log.error(`tunnel: ${this.lastError}`)
       }
+      this.clearAnnounce()
       this.setUrl(null)
-      this.resetRun()
+      this.seenUrl = null
+      this.conns = 0
+      this.fails = 0
+      this.buf = ''
       if (this.stopped) return
       this.restarts += 1
+      this.setState('down')
       // Chạy ổn được một lúc thì coi như lỗi mới, không phạt tiếp lần chờ cũ.
       attempt = Date.now() - startedAt > 60_000 ? 0 : attempt + 1
       const wait = delays[Math.min(attempt, delays.length - 1)] ?? 30_000
@@ -330,16 +330,14 @@ export class QuickTunnel {
     }
   }
 
-  /** Quên mọi thứ của lần chạy cloudflared trước (giữ lại lastUrl để giao diện còn nói được "địa chỉ cũ đã chết"). */
+  /** Quên trạng thái của lần chạy cloudflared trước (giữ `lastUrl` để giao diện còn nói được "địa chỉ cũ đã chết"). */
   private resetRun(): void {
+    this.clearAnnounce()
     this.seenUrl = null
-    this.seenAt = 0
     this.conns = 0
-    this.registered = false
-    this.downAt = 0
     this.fails = 0
     this.buf = ''
-    this.setState('starting')
+    if (this.restarts === 0) this.setState('starting')
   }
 
   private runOnce(): Promise<void> {
@@ -351,7 +349,6 @@ export class QuickTunnel {
         { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
       )
       this.proc = proc
-      this.fails = 0
       proc.stdout?.on('data', (b: Buffer) => this.onData(b))
       proc.stderr?.on('data', (b: Buffer) => this.onData(b))
       proc.on('error', (e) => reject(e))
@@ -363,7 +360,7 @@ export class QuickTunnel {
     })
   }
 
-  /** Đọc log cloudflared theo từng dòng: lấy địa chỉ, và đếm kết nối đang mở (Registered / Unregistered tunnel connection). */
+  /** Đọc log cloudflared theo từng dòng: lấy địa chỉ và đếm kết nối (chỉ để hiển thị + biết cloudflared đã nối). */
   private onData(chunk: Buffer): void {
     this.buf += chunk.toString()
     if (this.buf.length > 16_384) this.buf = this.buf.slice(-8_192)
@@ -378,20 +375,32 @@ export class QuickTunnel {
       if (found) {
         this.seenUrl = found
         this.lastUrl = found
-        this.seenAt = Date.now()
         this.setState('connecting')
-        this.opts.log.info(`tunnel: cloudflared cấp địa chỉ ${found}, đang đợi tunnel thông trước khi báo cho Worker`)
-        void this.check()
+        this.opts.log.info(`tunnel: cloudflared cấp địa chỉ ${found}, đợi nó nối tới Cloudflare rồi báo cho Worker`)
+        // Phòng khi log không có dòng "Registered" (bản cloudflared khác định dạng): vẫn báo sau một lúc, không gọi thử địa chỉ.
+        this.clearAnnounce()
+        this.announceTimer = setTimeout(() => this.announce(found), this.opts.announceAfterMs ?? 15_000)
+        this.announceTimer.unref()
       }
     }
     if (/Unregistered tunnel connection/.test(line)) {
       this.conns = Math.max(0, this.conns - 1)
-      if (this.conns === 0 && this.registered) this.markDown('cloudflared mất hết kết nối tới Cloudflare')
     } else if (/(?<![A-Za-z])Registered tunnel connection/.test(line)) {
       this.conns += 1
-      this.registered = true
-      if (this.state === 'connecting' || this.state === 'down') void this.check()
+      if (this.seenUrl) this.announce(this.seenUrl)
     }
+  }
+
+  /** Báo địa chỉ cho Worker (một lần cho mỗi địa chỉ). Không gọi thử địa chỉ ở đây. */
+  private announce(url: string): void {
+    if (this.seenUrl !== url || this.current === url) return
+    this.clearAnnounce()
+    this.fails = 0
+    this.lastError = ''
+    this.checkedAt = 0
+    this.rttMs = null
+    this.setState('ok')
+    this.setUrl(url)
   }
 
   private setUrl(url: string | null): void {
@@ -412,84 +421,46 @@ export class QuickTunnel {
     }
   }
 
-  /** Tunnel đã thông (đã chứng minh): báo địa chỉ cho Worker. */
-  private markOk(url: string): void {
-    this.fails = 0
-    this.downAt = 0
-    this.lastError = ''
-    this.setState('ok')
-    this.setUrl(url)
-  }
-
-  /** Tunnel vừa rớt: báo "không có" cho Worker ngay (đừng để nó đẩy vào địa chỉ chết), giữ tiến trình để chờ tự thông lại. */
-  private markDown(reason: string): void {
-    if (this.state !== 'ok') return
-    this.lastError = reason
-    this.downAt = Date.now()
-    this.setState('down')
-    this.opts.log.warn(`tunnel: ${reason}`)
-    this.setUrl(null)
-  }
-
-  private kill(why: string): void {
-    this.opts.log.warn(`tunnel: ${why} -> chạy lại để xin địa chỉ mới`)
-    this.fails = 0
-    this.proc?.kill()
-  }
-
-  /** Địa chỉ phải trả lời `/api/health` của chính VPS khi gọi từ Internet. */
-  private async probe(url: string): Promise<{ ok: boolean; definitive: boolean; ms: number; error: string }> {
+  /** Địa chỉ phải trả lời `/api/health` của VPS; hỏng HẲN `maxFails` lần LIÊN TIẾP mới giết cloudflared để xin địa chỉ mới. */
+  private async check(): Promise<void> {
+    const url = this.current
+    if (!url || !this.proc || this.checking || this.state !== 'ok') return
+    if (Date.now() - this.urlAt < (this.opts.graceMs ?? 30_000)) return
+    this.checking = true
     const t0 = Date.now()
+    let ok = false
+    let definitive = false
+    let error = ''
     try {
       const res = await (this.opts.fetchFn ?? fetch)(`${url}/api/health`, { signal: AbortSignal.timeout(10_000) })
+      ok = res.ok
+      // Có phản hồi mà không phải của Server mình (530/1033/502...) = Cloudflare nói tunnel này không có ai trả lời.
+      definitive = !res.ok
+      if (!ok) error = `HTTP ${res.status} từ Cloudflare (tunnel không có cloudflared trả lời)`
       await res.body?.cancel()
-      // Có phản hồi mà không phải của Server mình (530/1033/502...) = Cloudflare nói tunnel này không có ai trả lời: chắc chắn hỏng.
-      return { ok: res.ok, definitive: !res.ok, ms: Date.now() - t0, error: res.ok ? '' : `HTTP ${res.status} từ Cloudflare (tunnel không có cloudflared trả lời)` }
     } catch (e) {
-      // Không có phản hồi (DNS chưa nhận, timeout...): chưa kết luận được, có thể do chính mạng của VPS.
-      return { ok: false, definitive: false, ms: Date.now() - t0, error: `không gọi được tunnel: ${String((e as Error)?.message ?? e).slice(0, 80)}` }
+      // Không có phản hồi (DNS/mạng của chính VPS, timeout): chưa kết luận được.
+      error = `không gọi được tunnel: ${String((e as Error)?.message ?? e).slice(0, 80)}`
     }
-  }
-
-  private async check(): Promise<void> {
-    const url = this.seenUrl
-    if (!url || !this.proc || this.checking) return
-    const connecting = this.state === 'connecting'
-    if (!connecting && this.state === 'ok' && Date.now() - this.urlAt < (this.opts.graceMs ?? 30_000)) return
-    this.checking = true
     try {
-      const r = await this.probe(url)
-      if (this.seenUrl !== url || !this.proc) return // trong lúc chờ đã chạy lại
+      if (this.current !== url || !this.proc) return // trong lúc chờ đã đổi địa chỉ / chạy lại
       this.checkedAt = Date.now()
-      if (r.ok) {
-        this.rttMs = r.ms
-        if (this.state !== 'ok') this.markOk(url)
-        else this.fails = 0
+      if (ok) {
+        this.fails = 0
+        this.lastError = ''
+        this.rttMs = Date.now() - t0
         return
       }
       this.rttMs = null
-      if (connecting) {
-        // Mới xin được địa chỉ: vài giây đầu chưa thông là bình thường. Quá hạn mà vẫn không thông thì bỏ địa chỉ này.
-        if (Date.now() - this.seenAt > (this.opts.connectTimeoutMs ?? 90_000)) {
-          this.lastError = r.error
-          // cloudflared báo đã nối mà VPS không tự gọi được địa chỉ (DNS/mạng của VPS): tin cloudflared thay vì chạy lại vô tận.
-          if (this.registered && !r.definitive) this.markOk(url)
-          else this.kill(`địa chỉ ${url} không thông sau ${Math.round((this.opts.connectTimeoutMs ?? 90_000) / 1000)} giây (${r.error})`)
-        }
-        return
-      }
-      // Không có phản hồi (DNS/mạng của chính VPS) mà cloudflared vẫn còn kết nối tới Cloudflare: chưa chứng minh được tunnel hỏng, không đếm.
-      if (!r.definitive && this.conns > 0) {
-        this.lastError = r.error
-        return
-      }
+      this.lastError = error
+      if (!definitive && this.conns > 0) return // cloudflared vẫn còn kết nối: lỗi nằm ở phía VPS tự gọi, không phải tunnel
       this.fails += 1
-      this.lastError = r.error
-      this.opts.log.warn(`tunnel: kiểm tra hỏng (${this.fails}/${this.opts.maxFails ?? 3}): ${r.error}`)
-      // Hai lần hỏng liền: báo ngay cho Worker thôi đẩy vào địa chỉ này; chưa chạy lại vội vì có thể chỉ chập chờn.
-      if (this.fails >= 2) this.markDown(r.error)
-      const downTooLong = this.state === 'down' && this.downAt > 0 && Date.now() - this.downAt > (this.opts.downRestartMs ?? 45_000)
-      if (this.fails >= (this.opts.maxFails ?? 3) || downTooLong) this.kill(`tunnel rớt (${r.error})`)
+      this.opts.log.warn(`tunnel: kiểm tra hỏng (${this.fails}/${this.opts.maxFails ?? 3}): ${error}`)
+      if (this.fails >= (this.opts.maxFails ?? 3)) {
+        this.fails = 0
+        this.opts.log.warn('tunnel: hỏng liên tiếp, chạy lại cloudflared để xin địa chỉ mới')
+        this.proc?.kill()
+      }
     } finally {
       this.checking = false
     }

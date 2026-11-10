@@ -15,11 +15,17 @@ export type WorkerSyncOptions = {
     ingest: (item: WorkerItem) => IngestResult
     fetchFn?: typeof fetch
     clock?: () => number
+    /** Chỉ để kiểm thử: các mốc thử lại báo địa chỉ (giây). */
+    reportRetrySec?: number[]
 }
 
 const MAX_RAW = 16 * 1024
-/** Chu kỳ kéo (giây) khi Worker không có địa chỉ để đẩy tới. */
-const NO_PUSH_POLL_SEC = 10
+/** Chu kỳ kéo (giây) khi Worker không có địa chỉ để đẩy tới. 30 giây vẫn dư nhiều lần trong hạn tín hiệu (mặc định 120 giây) mà chỉ bằng 1/3 số request so với 10 giây. */
+const NO_PUSH_POLL_SEC = 30
+/** Mạng từ VPS tới workers.dev đôi khi chậm; 8 giây thì hay hụt oan. */
+const REQ_TIMEOUT_MS = 15_000
+/** Báo địa chỉ lỗi thì thử lại sau 5, 10, 20, 40, 60 giây (không phải đợi tới nhịp kéo kế tiếp, có thể là 300 giây). */
+const REPORT_RETRY_SEC = [5, 10, 20, 40, 60]
 
 /**
  * Server (VPS) là bên chủ động gọi Worker, không phải EA: EA chỉ nói chuyện với Gateway/Server nên không tốn
@@ -44,6 +50,10 @@ export class WorkerSync {
     private hintSec: number | null = null
     /** Chạy một nhịp ngay (đặt khi start): dùng để kéo liền khi vừa mất địa chỉ công khai. */
     private runTick: (() => Promise<void>) | null = null
+    /** Các lần báo địa chỉ chạy nối đuôi nhau, không bao giờ hai request báo chồng nhau. */
+    private chain: Promise<unknown> = Promise.resolve()
+    private retryTimer: NodeJS.Timeout | null = null
+    private retryN = 0
 
     constructor(private readonly o: WorkerSyncOptions) { }
 
@@ -96,6 +106,8 @@ export class WorkerSync {
         this.stopped = true
         this.runTick = null
         if (this.timer) clearTimeout(this.timer)
+        if (this.retryTimer) clearTimeout(this.retryTimer)
+        this.retryTimer = null
     }
 
     /** Địa chỉ VPS mà Worker nên đẩy tới (null = chưa có/đã rớt). Gửi ngay, và tự gửi lại ở các nhịp sau nếu lỗi. */
@@ -109,7 +121,7 @@ export class WorkerSync {
             void this.runTick()
         }
         // Vừa báo xong địa chỉ mới thì kéo bù một lần: tín hiệu bắn trong lúc tunnel đổi địa chỉ đang nằm chờ ở Worker.
-        void this.reportUrl().then((changed) => (changed && url !== null ? this.catchUp() : undefined)).catch(() => { })
+        void this.reportUrl().then((changed) => (changed && url !== null ? this.catchUp() : undefined)).catch(() => { /* đã ghi log và hẹn thử lại trong reportUrl */ })
     }
 
     private async catchUp(): Promise<void> {
@@ -122,21 +134,53 @@ export class WorkerSync {
         }
     }
 
-    /** true = vừa báo một địa chỉ mới lên Worker. */
-    private async reportUrl(): Promise<boolean> {
+    /** true = vừa báo một địa chỉ mới lên Worker. Lỗi thì ghi log, hẹn thử lại, rồi ném lỗi cho người gọi. */
+    private reportUrl(): Promise<boolean> {
+        const p = this.chain.then(() => this.doReport())
+        this.chain = p.catch(() => { })
+        return p
+    }
+
+    private async doReport(): Promise<boolean> {
         if (this.desiredUrl === undefined || this.desiredUrl === this.reportedUrl) return false
         const want = this.desiredUrl
-        const res = await this.f(`${this.o.workerUrl}/api/tunnel`, {
-            method: 'POST',
-            headers: this.headers(),
-            body: JSON.stringify({ url: want }),
-            signal: AbortSignal.timeout(8000),
-        })
-        await res.body?.cancel()
-        if (!res.ok) throw new Error(`báo địa chỉ lên Worker: HTTP ${res.status}`)
+        try {
+            const res = await this.f(`${this.o.workerUrl}/api/tunnel`, {
+                method: 'POST',
+                headers: this.headers(),
+                body: JSON.stringify({ url: want }),
+                signal: AbortSignal.timeout(REQ_TIMEOUT_MS),
+            })
+            await res.body?.cancel()
+            if (!res.ok) throw new Error(`báo địa chỉ lên Worker: HTTP ${res.status}`)
+        } catch (e) {
+            const msg = String((e as Error).message ?? e).slice(0, 160)
+            this.lastError = msg.startsWith('báo địa chỉ') ? msg : `báo địa chỉ lên Worker: ${msg}`
+            this.o.log.warn(`worker: ${this.lastError}`)
+            this.scheduleReportRetry()
+            throw e
+        }
         this.reportedUrl = want
+        this.retryN = 0
         this.o.log.info(want ? `worker: đã báo địa chỉ ${want}` : 'worker: đã báo tunnel rớt')
+        // Trong lúc chờ phản hồi địa chỉ có thể đã đổi tiếp: báo nốt cái mới nhất.
+        if (this.desiredUrl !== undefined && this.desiredUrl !== this.reportedUrl) void this.reportUrl().catch(() => { })
         return true
+    }
+
+    private scheduleReportRetry(): void {
+        if (this.stopped || this.retryTimer) return
+        const steps = this.o.reportRetrySec ?? REPORT_RETRY_SEC
+        const wait = steps[Math.min(this.retryN, steps.length - 1)] ?? 60
+        this.retryN += 1
+        this.retryTimer = setTimeout(() => {
+            this.retryTimer = null
+            if (this.stopped || this.desiredUrl === undefined || this.desiredUrl === this.reportedUrl) return
+            void this.reportUrl()
+                .then((changed) => (changed && this.desiredUrl !== null ? this.catchUp() : undefined))
+                .catch(() => { /* doReport đã hẹn thử lại */ })
+        }, wait * 1000)
+        this.retryTimer.unref()
     }
 
     /** Một nhịp: báo địa chỉ (nếu còn chưa báo được) rồi kéo bù. Trả về true nếu Worker trả lời bình thường. */
@@ -146,9 +190,8 @@ export class WorkerSync {
         try {
             try {
                 await this.reportUrl()
-            } catch (e) {
-                this.lastError = String((e as Error).message ?? e).slice(0, 160)
-                this.o.log.warn(`worker: ${this.lastError}`)
+            } catch {
+                // đã ghi log và hẹn thử lại; vẫn kéo bù ở dưới
             }
             return await this.pullOnce()
         } finally {
@@ -159,7 +202,7 @@ export class WorkerSync {
     async pullOnce(): Promise<boolean> {
         let res: Response
         try {
-            res = await this.f(`${this.o.workerUrl}/api/pull`, { headers: this.headers(), signal: AbortSignal.timeout(8000) })
+            res = await this.f(`${this.o.workerUrl}/api/pull`, { headers: this.headers(), signal: AbortSignal.timeout(REQ_TIMEOUT_MS) })
         } catch (e) {
             this.lastError = `không gọi được Worker: ${(e as Error).message}`.slice(0, 160)
             this.o.log.warn(`worker: ${this.lastError}`)
@@ -190,7 +233,7 @@ export class WorkerSync {
             const want = this.desiredUrl === null ? null : this.desiredUrl.replace(/\/+$/, '').toLowerCase()
             if (held !== want) {
                 this.reportedUrl = undefined
-                void this.reportUrl().catch((e) => this.o.log.warn(`worker: ${String((e as Error).message ?? e).slice(0, 160)}`))
+                void this.reportUrl().catch(() => { /* đã ghi log và hẹn thử lại */ })
             }
         }
         const items = Array.isArray(data.items) ? data.items : []
@@ -211,7 +254,7 @@ export class WorkerSync {
                     method: 'POST',
                     headers: this.headers(),
                     body: JSON.stringify({ ids: done }),
-                    signal: AbortSignal.timeout(8000),
+                    signal: AbortSignal.timeout(REQ_TIMEOUT_MS),
                 })
                 await r.body?.cancel()
             } catch {
