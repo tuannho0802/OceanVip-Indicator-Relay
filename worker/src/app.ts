@@ -77,9 +77,9 @@ async function readBody(req: Request): Promise<Record<string, unknown> | null> {
   }
 }
 
-/** Lần đầu chạy: chưa có tài khoản nào mà có secret ADMIN_PASSWORD thì tạo Admin (phải đổi mật khẩu ngay lần đăng nhập đầu). */
+/** Lần đầu chạy (hoặc khi mất hết Admin): chưa có Admin nào mà có secret ADMIN_PASSWORD thì tạo Admin (phải đổi mật khẩu ngay lần đăng nhập đầu). */
 export async function ensureAdmin(env: Env, now: number): Promise<'ok' | 'need_admin_password'> {
-  const c = await env.DB.prepare('SELECT COUNT(*) AS c FROM users').first<{ c: number }>()
+  const c = await env.DB.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'admin'").first<{ c: number }>()
   if ((c?.c ?? 0) > 0) return 'ok'
   if (!env.ADMIN_PASSWORD || passwordProblem(env.ADMIN_PASSWORD)) return 'need_admin_password'
   const name = (env.ADMIN_USER ?? '').trim().toLowerCase()
@@ -113,6 +113,8 @@ async function connectCode(env: Env, workerUrl: string, id: string): Promise<str
 type ServerRow = { id: string; name: string | null; owner: number | null; locked: number; seen: number; has_url: number; created: number; owner_name: string | null; owner_locked: number | null; pending: number }
 type HookRow = { id: number; name: string; owner: number; key: string; server: string | null; locked: number; last_used: number; hits: number; created: number; owner_name: string }
 
+const DEFAULT_INSTALLER_URL = 'https://github.com/tuannho0802/OceanVip-Indicator-Relay/releases'
+
 async function overview(env: Env, u: UserRow, workerUrl: string, now: number): Promise<Response> {
   const admin = u.role === 'admin'
   const sSql =
@@ -134,6 +136,7 @@ async function overview(env: Env, u: UserRow, workerUrl: string, now: number): P
     worker_url: workerUrl,
     https_ok: normalizeOrigin(workerUrl) !== null,
     sync_ready: Boolean(env.SYNC_KEY),
+    installer_url: /^https:\/\//.test(env.INSTALLER_URL ?? '') ? env.INSTALLER_URL : DEFAULT_INSTALLER_URL,
     user: pub(u),
     usage: { servers: servers.filter((s) => mine(s.owner)).length, hooks: hooks.filter((h) => mine(h.owner)).length },
     servers: servers.map((s) => ({
@@ -162,6 +165,8 @@ async function overview(env: Env, u: UserRow, workerUrl: string, now: number): P
     })),
   }
   if (admin) {
+    // Webhook URL chung đời cũ: chỉ Admin thấy, để không phải nhớ/lưu từ lần setup.
+    if (env.WEBHOOK_KEY) body.legacy_hook_url = `${workerUrl}/webhook?key=${env.WEBHOOK_KEY}`
     const users = (
       await env.DB.prepare(
         'SELECT id, username, role, must_change, locked, max_servers, max_hooks, can_add_server, can_add_hook, created, last_login, ' +
@@ -288,7 +293,7 @@ export async function appRoute(req: Request, env: Env, ctx: Ctx, url: URL, deps:
   if (head === 'servers') {
     const id = parts[2] ?? ''
     if (id === '' && m === 'POST') {
-      if (!env.SYNC_KEY) return err(503, 'sync_disabled', 'Worker chưa có SYNC_KEY: chạy lại `npm run setup`')
+      if (!env.SYNC_KEY) return err(503, 'sync_disabled', 'Worker chưa có SYNC_KEY. Admin thêm secret SYNC_KEY ở Cloudflare Dashboard (Settings → Variables and Secrets) hoặc ở GitHub Secrets rồi chạy Deploy Worker.')
       const b = await readBody(req)
       if (!b) return err(400, 'bad_request', 'Dữ liệu gửi lên không hợp lệ')
       let owner = u

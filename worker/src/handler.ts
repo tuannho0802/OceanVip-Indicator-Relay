@@ -44,6 +44,8 @@ export type Env = {
   ADMIN_USER?: string
   /** Địa chỉ https công khai của Worker (domain riêng). Trống = lấy từ địa chỉ đang truy cập. */
   PUBLIC_URL?: string
+  /** Trang tải bộ cài VPS hiện ở tab Hướng dẫn (mặc định: trang Releases của repo). */
+  INSTALLER_URL?: string
 }
 export type Ctx = { waitUntil(p: Promise<unknown>): void }
 
@@ -92,7 +94,7 @@ export async function handle(req: Request, env: Env, ctx: Ctx, deps: Deps = {}):
     const msg = String((e as Error)?.message ?? e)
     // Quên chạy migration sau khi cập nhật mã: báo thẳng cách sửa thay vì "internal error" khó hiểu.
     if (/no such (table|column)/i.test(msg)) {
-      return json(500, { error: 'db_not_migrated', message: 'D1 chưa được cập nhật bảng mới. Chạy: cd worker && npx wrangler d1 migrations apply ocean-relay --remote (hoặc commit có [deploy]).' })
+      return json(500, { error: 'db_not_migrated', message: 'D1 chưa được cập nhật bảng mới. Admin vào GitHub → Actions → Deploy Worker → Run workflow: workflow tự áp migration (không cần gõ lệnh).' })
     }
     return json(500, { error: 'internal', message: 'Lỗi nội bộ của Worker (xem Observability trên Cloudflare)' })
   }

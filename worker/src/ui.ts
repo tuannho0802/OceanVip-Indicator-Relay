@@ -144,8 +144,11 @@ const CLIENT_JS = String.raw`
     if (S.setup !== 'ok') {
       add(box, h('div', { class: 'warn' },
         h('b', { text: 'Worker chưa có tài khoản Admin. ' }),
-        'Trên máy dev chạy các lệnh dưới đây (nhập mật khẩu ≥ 8 ký tự), rồi tải lại trang và đăng nhập bằng tài khoản admin:',
-        h('pre', { text: 'cd worker\nnpx wrangler secret put ADMIN_PASSWORD' })))
+        'Người triển khai Worker đặt mật khẩu ban đầu cho Admin (không cần gõ lệnh), rồi tải lại trang này:',
+        h('ol', null,
+          h('li', { text: 'Cloudflare Dashboard → Workers & Pages → ocean-relay → Settings → Variables and Secrets → thêm secret ADMIN_PASSWORD (từ 8 ký tự) → Deploy.' }),
+          h('li', { text: 'Hoặc ở GitHub: Settings → Secrets and variables → Actions → thêm secret ADMIN_PASSWORD, rồi Actions → Deploy Worker → Run workflow.' })),
+        'Sau đó đăng nhập bằng tên admin và mật khẩu vừa đặt; hệ thống bắt đổi mật khẩu ở lần đầu.'))
     }
     if (S.notice) add(box, h('div', { class: 'err', text: S.notice }))
     add(box, h('form', { 'data-form': 'login' },
@@ -272,7 +275,7 @@ const CLIENT_JS = String.raw`
     var admin = u.role === 'admin'
     var out = h('div', null)
     if (!ov.https_ok) add(out, h('div', { class: 'warn', text: 'Địa chỉ Worker hiện tại (' + ov.worker_url + ') không phải https công khai: mã kết nối và Webhook URL tạo ra sẽ không dùng được. Hãy mở trang này bằng địa chỉ https://…workers.dev (hoặc đặt biến PUBLIC_URL).' }))
-    if (!ov.sync_ready) add(out, h('div', { class: 'err', text: 'Worker chưa có SYNC_KEY nên chưa thể tạo mã kết nối VPS. Admin chạy lại: cd worker && npm run setup' }))
+    if (!ov.sync_ready) add(out, h('div', { class: 'err', text: 'Worker chưa có SYNC_KEY nên chưa thể tạo mã kết nối VPS. Admin thêm secret SYNC_KEY (chuỗi ngẫu nhiên từ 32 ký tự) ở Cloudflare Dashboard (Settings → Variables and Secrets) hoặc ở GitHub Secrets rồi chạy Deploy Worker.' }))
     var mineS = ov.servers.filter(function (s) { return s.owner === u.id }).length
     var mineH = ov.hooks.filter(function (k) { return k.owner === u.id }).length
     var sOk = admin || (u.can_add_server && mineS < u.max_servers)
@@ -300,6 +303,13 @@ const CLIENT_JS = String.raw`
       h('span', { class: 'muted', text: why(hOk, mineH, u.max_hooks, 'Webhook') })))
     if (ov.hooks.length === 0) add(out, h('p', { class: 'muted', text: 'Chưa có Webhook URL. Bấm “Tạo Webhook URL”, rồi sao chép dán vào TradingView (xem tab Hướng dẫn).' }))
     ov.hooks.forEach(function (k) { add(out, hookCard(k, admin, ov.servers)) })
+    if (admin && ov.legacy_hook_url) {
+      add(out, h('div', { class: 'card' },
+        h('div', { class: 'row' }, h('h3', { text: 'Webhook URL chung (đời cũ)' }), h('span', { class: 'muted grow', text: 'Chỉ Admin thấy. Giao cho VPS của Admin và VPS đời cũ, không giao cho VPS của người dùng.' })),
+        h('div', { class: 'row', style: 'margin-top:8px' },
+          h('input', { class: 'url', readonly: true, value: ov.legacy_hook_url, 'data-sel': true }),
+          h('button', { 'data-act': 'copyText', 'data-v': ov.legacy_hook_url, text: 'Sao chép URL' }))))
+    }
     return out
   }
 
@@ -366,11 +376,15 @@ const CLIENT_JS = String.raw`
         'Tab Kết nối → mục VPS → “+ Thêm VPS” → bấm “Lấy mã kết nối” rồi Sao chép (chuỗi bắt đầu bằng ocean1.).',
         'Tab Kết nối → mục Webhook → “+ Tạo Webhook URL” → Sao chép URL (dạng ' + wu + '/webhook?key=…).'
       ])),
-      sec('2 · Dán mã trên VPS', ol([
+      sec('2 · Dán mã trên VPS', h('div', null, h('p', null, 'Tải bộ cài: ', h('a', { href: S.ov ? S.ov.installer_url : '#', target: '_blank', rel: 'noopener noreferrer', text: 'OceanRelay-Setup.exe (trang Releases, chọn bản server-v…)' })), ol([
         'Cài OceanRelay-Setup.exe trên VPS (bộ cài không hỏi gì).',
         'Ngay TRÊN VPS, mở http://127.0.0.1:8090/#setup (xem từ xa sẽ không thấy nút Cài đặt).',
         'Dán mã ocean1.… vào ô “Mã kết nối”, điền tài khoản MT5, bấm “Lưu và kiểm tra kết nối”.',
         'Quay lại tab Kết nối: VPS chuyển sang “Đang kết nối” trong chừng nửa phút.'
+      ]))),
+      sec('MT5 (làm một lần trên VPS, bằng giao diện MT5)', ol([
+        'MT5 → Tools → Options → Expert Advisors → bật Allow WebRequest và thêm địa chỉ Gateway (mặc định http://127.0.0.1:47860; trang Cài đặt trên VPS luôn ghi đúng địa chỉ đang dùng).',
+        'Gắn EA OceanRelay lên MỘT chart. Thử trên tài khoản DEMO trước: thấy tín hiệu và ack trên giao diện VPS là thông.'
       ])),
       sec('3 · Dán Webhook URL vào TradingView', ol([
         'Mở biểu đồ có indicator OCEAN VIP → bấm Alert (Alt+A) → Tạo alert.',
@@ -556,61 +570,63 @@ export function appPage(): Response {
     })
 }
 
-/** Trang hướng dẫn vận hành Worker (công khai, chỉ có lệnh mẫu, KHÔNG chứa khóa nào) để quên thì mở lại xem. */
+/** Trang hướng dẫn vận hành Worker (công khai, KHÔNG chứa khóa nào). Phần đầu chỉ dùng trình duyệt; dòng lệnh nằm riêng ở mục "Nâng cao". */
 export function helpPage(): Response {
-    return html(`<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OCEAN Relay · Hướng dẫn Worker</title>
+  return html(`<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OCEAN Relay · Hướng dẫn Worker</title>
 <style>${CSS}</style></head>
 <body><main><h1>OCEAN<span style="color:#19c3b1"> RELAY</span> · Hướng dẫn Worker (dành cho Admin)</h1>
-<p>Các lệnh dưới đây chạy trên <b>máy dev</b> (máy có mã nguồn và đã đăng nhập Cloudflare), không chạy trên VPS. Người dùng cuối <b>không cần</b> chạy lệnh nào: họ chỉ đăng nhập <a href="/">trang quản lý</a>. <a href="/">Về trang quản lý</a></p>
+<p>Mọi thao tác hằng ngày đều làm ngay trên <a href="/">trang quản lý</a>. Người dùng cuối <b>không</b> cần cài công cụ hay gõ lệnh: họ chỉ đăng nhập, bấm nút và sao chép/dán.</p>
 
-<h2>1 · Tạo Worker (một lần)</h2>
+<h2>1 · Thiết lập Worker bằng trình duyệt (không cần gõ lệnh)</h2>
+<pre>1. Cloudflare Dashboard: tạo D1 database tên ocean-relay, ghi lại Database ID.
+   Tạo API Token (quyền Workers Scripts: Edit, D1: Edit) và ghi lại Account ID.
+2. GitHub repo → Settings → Secrets and variables → Actions → thêm:
+     CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, D1_DATABASE_ID
+     ADMIN_PASSWORD   (mật khẩu ban đầu của Admin, từ 8 ký tự)
+     SYNC_KEY         (chuỗi ngẫu nhiên từ 32 ký tự: khóa gốc, không đưa cho ai)
+     WEBHOOK_KEY      (tùy chọn, từ 16 ký tự: chỉ cần nếu muốn dùng Webhook URL chung đời cũ)
+3. GitHub → Actions → Deploy Worker → Run workflow.
+   Workflow tự kiểm tra, áp migration D1, deploy và nạp các secret ở trên vào Worker.
+4. Mở địa chỉ Worker (https://ocean-relay.&lt;tài-khoản&gt;.workers.dev), đăng nhập admin, đổi mật khẩu.</pre>
+<p>Các lần sau chỉ cần commit có <code>[deploy]</code> hoặc bấm Run workflow lại: migration được áp tự động. Đổi <code>SYNC_KEY</code> làm mọi mã kết nối cũ mất hiệu lực (người dùng lấy mã mới ở trang quản lý).</p>
+
+<h2>2 · Cấp tài khoản cho người dùng</h2>
+<pre>Trang quản lý → tab "Người dùng" → "+ Tạo"
+  - đặt hạn mức VPS / Webhook
+  - gửi RIÊNG cho người dùng: địa chỉ trang + tên đăng nhập + mật khẩu tạm (chỉ hiện một lần)
+Người dùng tự đổi mật khẩu, rồi tự bấm "+ Thêm VPS" và "+ Tạo Webhook URL" trong hạn mức.
+Hết hạn mức hoặc bị khóa: Admin tăng hạn mức / "Mở khóa thêm VPS mới" / "Mở khóa tạo Webhook mới".</pre>
+<p>Admin khóa được: tài khoản (mọi VPS + Webhook của người đó ngừng chạy ngay), từng VPS, từng Webhook, và riêng việc thêm mới. Người dùng chỉ thấy VPS, Webhook, tín hiệu của chính mình.</p>
+
+<h2>3 · Theo dõi và gỡ lỗi (trên trang quản lý)</h2>
+<pre>Tab "Kết nối"   : VPS nào đang kết nối / mất liên lạc / bị khóa, chủ sở hữu, lần liên lạc cuối, số tín hiệu đang chờ.
+                  Mỗi VPS có gợi ý cách xử lý ngay trên thẻ.
+Webhook         : nút "Gửi thử" (tạo tín hiệu OCEAN TEST), "Đổi khóa", "Xóa"; Admin thấy cả Webhook URL chung đời cũ.
+Tab "Tín hiệu"  : từng tín hiệu đã giao cho bao nhiêu VPS.
+Tab "Hướng dẫn" : thiết lập 3 bước + bảng sự cố thường gặp cho người dùng.</pre>
+
+<h2>4 · Sự cố thường gặp (Admin)</h2>
+<pre>Trang đăng nhập báo "chưa có Admin"      -> thêm secret ADMIN_PASSWORD (Cloudflare Dashboard → Workers &amp; Pages → ocean-relay → Settings →
+                                            Variables and Secrets, hoặc GitHub Secrets rồi Run workflow), tải lại trang
+Báo db_not_migrated / no such table      -> GitHub → Actions → Deploy Worker → Run workflow (tự áp migration)
+Báo "chưa có SYNC_KEY"                   -> thêm secret SYNC_KEY (xem mục 1)
+Người dùng quên mật khẩu                 -> Admin: tab "Người dùng" → "Đặt lại mật khẩu", gửi mật khẩu tạm mới
+Admin duy nhất quên mật khẩu             -> Cloudflare Dashboard → Storage &amp; Databases → D1 → ocean-relay → Console, chạy:
+                                            DELETE FROM users WHERE role = 'admin';
+                                            rồi đặt lại secret ADMIN_PASSWORD (mật khẩu mới) và mở lại trang: Admin được tạo lại, phải đổi mật khẩu
+Webhook trả 401 bad_key                  -> URL sai/đã đổi khóa: lấy lại URL ở trang quản lý
+Webhook trả 403 hook_locked / user_locked-> Admin đang khóa
+VPS báo HTTP 403 (server_locked)         -> Admin đang khóa VPS hoặc chủ; server_revoked = VPS đã bị xóa, cần tạo VPS mới
+VPS báo HTTP 401                         -> mã kết nối sai hoặc đã đổi SYNC_KEY: lấy mã mới ở trang quản lý</pre>
+
+<h2>5 · Nâng cao (tùy chọn, dùng dòng lệnh trên máy dev)</h2>
+<p>Không bắt buộc. Chỉ dùng nếu bạn muốn cài nhanh từ máy dev thay cho các bước trình duyệt ở mục 1.</p>
 <pre>npm install
 cd worker
 npm install
 npx wrangler login
-npm run setup</pre>
-<p><code>setup</code> tạo database D1, áp migration, sinh khóa, deploy Worker rồi in: <b>Webhook URL chung</b> (đời cũ, tùy chọn), <b>tài khoản Admin + mật khẩu tạm</b> (phải đổi ngay khi đăng nhập lần đầu). Khóa gốc ghi vào <code>worker/.ocean-master.json</code> — <b>không commit, không gửi cho ai</b>.</p>
-
-<h2>2 · Cấp tài khoản cho người dùng (không cần dòng lệnh)</h2>
-<pre>Đăng nhập trang quản lý bằng Admin → tab "Người dùng" → "+ Tạo"
-  - đặt hạn mức VPS / Webhook
-  - gửi RIÊNG cho người dùng: địa chỉ trang + tên đăng nhập + mật khẩu tạm
-Người dùng tự đổi mật khẩu khi vào lần đầu, rồi tự bấm "+ Thêm VPS" và "+ Tạo Webhook URL" (trong hạn mức)
-Hết hạn mức hoặc bị khóa: Admin tăng hạn mức / "Mở khóa thêm VPS mới" / "Mở khóa tạo Webhook mới"</pre>
-<p>Admin khóa được: tài khoản (mọi VPS + Webhook của người đó ngừng chạy ngay), từng VPS, từng Webhook, và riêng việc thêm VPS/Webhook mới. Người dùng chỉ thấy VPS, Webhook, tín hiệu của chính mình.</p>
-
-<h2>3 · Cập nhật Worker đã chạy bản cũ</h2>
-<pre>cd worker
-npx wrangler d1 migrations apply ocean-relay --remote    # hoặc commit có [deploy]
-npx wrangler secret put ADMIN_PASSWORD                    # mật khẩu ban đầu của Admin (≥ 8 ký tự)
-npx wrangler deploy</pre>
-<p>Admin được tạo tự động ở lần mở trang đầu tiên khi <i>chưa có tài khoản nào</i> và có secret <code>ADMIN_PASSWORD</code>. VPS đời cũ (cấp bằng <code>npm run issue</code>) vẫn chạy bình thường và hiện trong danh sách của Admin.</p>
-
-<h2>4 · Xem VPS nào đang kết nối</h2>
-<p>Trang quản lý → tab "Kết nối" (Admin thấy tất cả, kèm chủ sở hữu, lần liên lạc cuối, số tín hiệu đang chờ). Hoặc dòng lệnh:</p>
-<pre>cd worker
-npm run issue -- --list</pre>
-
-<h2>5 · Webhook URL cho TradingView</h2>
-<p>Lấy ở trang quản lý: "+ Tạo Webhook URL" rồi bấm Sao chép. Dạng <code>https://…workers.dev/webhook?key=oh_…</code>. TradingView: Alert → Notifications → Webhook URL → dán; Condition chọn <i>Any alert() function call</i>. Không đăng URL này ở nơi công khai; lộ thì bấm "Đổi khóa".</p>
-
-<h2>Cấp mã cho VPS bằng dòng lệnh (cách cũ, vẫn dùng được)</h2>
-<pre>cd worker
-npm run issue -- "Tên VPS" [--id ten-vps]</pre>
-<p>VPS cấp bằng cách này thuộc về Admin, nhận tín hiệu của khóa chung <code>WEBHOOK_KEY</code>.</p>
-
-<h2>Sự cố thường gặp</h2>
-<pre>Missing script: "issue"          -> bạn đang ở thư mục gốc; chạy: cd worker
-Chưa có .ocean-master.json       -> chạy npm run setup trước
-Trang quản lý: "chưa có Admin"   -> npx wrangler secret put ADMIN_PASSWORD (xem mục 3), tải lại trang
-Quên mật khẩu Admin              -> npx wrangler d1 execute ocean-relay --remote --command "DELETE FROM users WHERE role='admin'"
-                                    (rồi mở lại trang: Admin được tạo lại từ ADMIN_PASSWORD, phải đổi mật khẩu)
-Lỗi db_not_migrated / no such table -> chạy migration (mục 3)
-Webhook trả 401 bad_key          -> URL sai/đã đổi khóa: lấy lại URL ở trang quản lý
-Webhook trả 403 hook_locked / user_locked -> Admin đang khóa
-VPS báo HTTP 403 (server_locked) -> Admin đang khóa VPS hoặc chủ; server_revoked = VPS đã bị xóa, cần VPS + mã mới
-VPS báo HTTP 401                 -> mã kết nối sai hoặc bị đổi SYNC_KEY
-Thu hồi VPS cấp bằng dòng lệnh   -> đổi SYNC_KEY gốc (node setup.mjs --webhook-key ... --sync-key ...) rồi cấp lại mã</pre>
-<p class="warn">Worker lỗi hoặc cần deploy lại: <code>cd worker</code> rồi <code>npm run deploy</code>. Đổi <code>SYNC_KEY</code> làm mọi mã kết nối cũ (kể cả mã User tạo trên trang) mất hiệu lực, hãy lấy mã mới ở trang quản lý.</p>
+npm run setup            # tạo D1, áp migration, sinh khóa + mật khẩu Admin, đặt secret, deploy, in địa chỉ + tài khoản Admin
+npm run issue -- --list  # liệt kê VPS (cách cũ cấp mã: npm run issue -- "Tên VPS")</pre>
+<p class="warn">Không nạp <code>schema.sql</code> lên D1 thật (chỉ dùng cho test/dev): migration có <code>ALTER TABLE</code> nên phải đi qua <code>migrations apply</code> hoặc workflow Deploy Worker. Khóa gốc do <code>setup</code> sinh ghi ở <code>worker/.ocean-master.json</code>: không commit, không gửi cho ai.</p>
 </main></body></html>`)
 }

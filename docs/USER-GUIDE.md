@@ -36,7 +36,7 @@ Mỗi tín hiệu vào lệnh mở **3 lệnh cùng chiều, cùng giá vào, c�
 
 ## Xem và kiểm tra
 - Tín hiệu và trạng thái: http://127.0.0.1:8090/
-- Kiểm tra nhanh: `scripts\check-vps.ps1` trong thư mục cài (mặc định `C:\Program Files\OceanRelay`).
+- Kiểm tra nhanh: mở http://127.0.0.1:8090/#setup, mục **Trạng thái** báo Worker, địa chỉ công khai và Gateway đã thông chưa; kèm gợi ý khi chưa thông. Muốn thử cả đường đi: ở trang quản lý Worker bấm **Gửi thử** (tab Kết nối) rồi xem tab **Tín hiệu**. Không cần chạy lệnh nào.
 - Log: `C:\ProgramData\OceanRelay\logs`. Cài lỗi: `install.log` trong đó.
 - Nâng cấp: chạy bộ cài mới; mã kết nối, tài khoản và các cài đặt khác được giữ nguyên.
 

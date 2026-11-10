@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { JSDOM } from 'jsdom'
 import { afterEach, describe, expect, it } from 'vitest'
 import { type Env, handle } from '../worker/src/handler'
-import { SYNC_KEY, fakeD1 } from './helpers'
+import { SYNC_KEY, WEBHOOK_KEY, fakeD1 } from './helpers'
 
 const WORKER = 'https://relay.example.workers.dev'
 const windows: { close: () => void }[] = []
@@ -127,7 +127,8 @@ describe('trang quản lý của Worker (giao diện thật)', () => {
         const env: Env = { DB: fakeD1(readFileSync('worker/schema.sql', 'utf8')), SYNC_KEY }
         const p = await open(env)
         await p.until(() => p.text().includes('ADMIN_PASSWORD'), 'hướng dẫn đặt ADMIN_PASSWORD')
-        expect(p.text()).toContain('wrangler secret put ADMIN_PASSWORD')
+        expect(p.text()).toContain('Cloudflare Dashboard')
+    expect(p.text()).toContain('Run workflow')
     })
 
     it('sai mật khẩu hiện thông báo rõ ràng, không lộ tên đăng nhập có tồn tại hay không', async () => {
@@ -137,4 +138,81 @@ describe('trang quản lý của Worker (giao diện thật)', () => {
         p.submit(p.form('login'))
         await p.until(() => p.text().includes('Sai tên đăng nhập hoặc mật khẩu'), 'thông báo sai mật khẩu')
     })
+})
+/** Dấu hiệu bắt người dùng gõ lệnh: không được xuất hiện ở BẤT KỲ màn hình nào của trang quản lý. */
+const CLI = /\b(npm|npx|wrangler|powershell|cd worker)\b|\.ps1|\.mjs|--remote/i
+
+describe('mọi thao tác làm được trên UI Worker, không màn hình nào bắt gõ lệnh', () => {
+  it('Admin + User đi qua mọi tab: không có lệnh; có link bộ cài, bước MT5, Webhook chung chỉ Admin thấy', async () => {
+    const env: Env = { ...fresh(), WEBHOOK_KEY, INSTALLER_URL: 'https://example.com/releases' }
+    const a = await open(env)
+    await a.until(() => !!a.form('login'), 'form đăng nhập')
+    a.fill(a.form('login'), { username: 'admin', password: 'admin-initial-pass' })
+    a.submit(a.form('login'))
+    await a.until(() => !!a.form('password'), 'đổi mật khẩu')
+    a.fill(a.form('password'), { current: 'admin-initial-pass', next: 'admin-real-pass-9', again: 'admin-real-pass-9' })
+    a.submit(a.form('password'))
+    await a.until(() => a.text().includes('Webhook URL chung (đời cũ)'), 'thẻ Webhook chung của Admin')
+    expect((a.doc.querySelector('input.url[value*="/webhook?key="]') as HTMLInputElement | null)?.value).toContain(`key=${WEBHOOK_KEY}`)
+    const seen: string[] = [a.text()]
+    for (const t of ['users', 'sigs', 'guide', 'acct', 'conn']) {
+      a.tab(t)
+      await new Promise((r) => setTimeout(r, 60))
+      seen.push(a.text())
+    }
+    a.tab('users')
+    await a.until(() => !!a.form('addUser'), 'form tạo tài khoản')
+    a.fill(a.form('addUser'), { username: 'nam' })
+    a.submit(a.form('addUser'))
+    await a.until(() => a.secretValues().length === 2, 'mật khẩu tạm')
+    const temp = a.secretValues()[1] as string
+    seen.push(a.text())
+    for (const t of seen) expect(t).not.toMatch(CLI)
+
+    const u = await open(env)
+    await u.until(() => !!u.form('login'), 'form đăng nhập user')
+    u.fill(u.form('login'), { username: 'nam', password: temp })
+    u.submit(u.form('login'))
+    await u.until(() => !!u.form('password'), 'đổi mật khẩu user')
+    u.fill(u.form('password'), { current: temp, next: 'nam-new-pass-1', again: 'nam-new-pass-1' })
+    u.submit(u.form('password'))
+    await u.until(() => !!u.form('addServer'), 'dashboard user')
+    expect(u.text()).not.toContain('Webhook URL chung') // User không thấy khóa chung
+    expect(u.text()).not.toContain(WEBHOOK_KEY)
+    const userSeen: string[] = []
+    for (const t of ['sigs', 'guide', 'acct', 'conn']) {
+      u.tab(t)
+      await new Promise((r) => setTimeout(r, 60))
+      userSeen.push(u.text())
+    }
+    u.tab('guide')
+    await u.until(() => u.text().includes('Sự cố thường gặp'), 'tab hướng dẫn')
+    const link = u.doc.querySelector('a[href="https://example.com/releases"]')
+    expect(link).not.toBeNull()
+    expect(link?.getAttribute('rel')).toContain('noopener')
+    expect(u.text()).toContain('Allow WebRequest')
+    for (const t of [...userSeen, u.text()]) expect(t).not.toMatch(CLI)
+  })
+
+  it('INSTALLER_URL không phải https bị bỏ qua (không cho link javascript:)', async () => {
+    const env: Env = { ...fresh(), INSTALLER_URL: 'javascript:alert(1)' }
+    const u = await open(env)
+    await u.until(() => !!u.form('login'), 'form đăng nhập')
+    u.fill(u.form('login'), { username: 'admin', password: 'admin-initial-pass' })
+    u.submit(u.form('login'))
+    await u.until(() => !!u.form('password'), 'đổi mật khẩu')
+    u.fill(u.form('password'), { current: 'admin-initial-pass', next: 'admin-real-pass-9', again: 'admin-real-pass-9' })
+    u.submit(u.form('password'))
+    await u.until(() => !!u.form('addServer'), 'dashboard')
+    u.tab('guide')
+    await u.until(() => u.text().includes('Sự cố thường gặp'), 'tab hướng dẫn')
+    expect(u.doc.querySelector('a[href^="javascript"]')).toBeNull()
+    expect(u.doc.querySelector('a[href^="https://github.com/"]')).not.toBeNull()
+  })
+
+  it('trang đăng nhập khi chưa có Admin và thiếu SYNC_KEY: hướng dẫn bằng trình duyệt, không lệnh', async () => {
+    const p = await open({ DB: fakeD1(readFileSync('worker/schema.sql', 'utf8')) })
+    await p.until(() => p.text().includes('ADMIN_PASSWORD'), 'hướng dẫn')
+    expect(p.text()).not.toMatch(CLI)
+  })
 })

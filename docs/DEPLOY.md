@@ -2,7 +2,10 @@
 
 Cần: tài khoản Cloudflare (gói free đủ), VPS Windows chạy MT5 cho mỗi người dùng, Node 22.13+ trên máy của chủ Worker.
 
-## 1. Worker (Admin làm MỘT lần, trên máy dev)
+## 1. Worker (Admin làm MỘT lần)
+**Cách A, chỉ dùng trình duyệt (không cần Node/dòng lệnh):** tạo D1 `ocean-relay` + API Token trên Cloudflare Dashboard; ở GitHub thêm các secret `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `D1_DATABASE_ID`, `ADMIN_PASSWORD` (≥ 8 ký tự), `SYNC_KEY` (chuỗi ngẫu nhiên ≥ 32 ký tự), tùy chọn `WEBHOOK_KEY`; rồi Actions → **Deploy Worker** → Run workflow. Workflow tự áp migration, deploy và nạp secret vào Worker. Mở địa chỉ Worker, đăng nhập `admin` + `ADMIN_PASSWORD`, đổi mật khẩu. Trang `/help` của Worker có đủ các bước này.
+
+**Cách B, từ máy dev (nhanh hơn nếu đã quen Node):**
 ```bash
 npm install
 cd worker && npm install
@@ -13,7 +16,7 @@ Lệnh in ra **địa chỉ trang quản lý** và **tài khoản Admin + mật 
 
 Về sau cập nhật Worker bằng commit có `[deploy]` (secret GitHub trong [CICD.md](CICD.md)): workflow tự áp migration, không cần chạy lệnh nào.
 
-**Nâng cấp Worker đã chạy bản cũ** (chưa có tài khoản): commit `[deploy]` (hoặc `cd worker && npx wrangler d1 migrations apply ocean-relay --remote`), rồi `npx wrangler secret put ADMIN_PASSWORD` và mở trang quản lý một lần để Admin được tạo. VPS cấp bằng `npm run issue` vẫn chạy bình thường và thuộc về Admin. Thiếu migration thì Worker trả `db_not_migrated` kèm cách sửa.
+**Nâng cấp Worker đã chạy bản cũ** (chưa có tài khoản): chạy Deploy Worker (hoặc commit `[deploy]`), đặt secret `ADMIN_PASSWORD` (GitHub Secrets hoặc Cloudflare Dashboard → Settings → Variables and Secrets) và mở trang quản lý một lần để Admin được tạo. Không cần dòng lệnh. VPS cấp bằng `npm run issue` vẫn chạy bình thường và thuộc về Admin. Thiếu migration thì Worker trả `db_not_migrated` kèm cách sửa.
 
 > Không nạp `schema.sql` lên D1 thật: nó chỉ dùng cho test/dev. Migration 0003 có `ALTER TABLE` nên phải đi qua `migrations apply`.
 
@@ -24,7 +27,7 @@ Admin có thể: tăng/giảm hạn mức; khóa/mở khóa việc **thêm VPS m
 
 **Người dùng tự làm trên trang** (trong hạn mức): **+ Thêm VPS** → trang sinh mã kết nối `ocean1.…` (nút Sao chép) ; **+ Tạo Webhook URL** → trang sinh URL `…/webhook?key=…` (nút Sao chép), có nút **Gửi thử** và **Đổi khóa**. Tab **Hướng dẫn** có thiết lập 3 bước và bảng sự cố thường gặp.
 
-Xem VPS nào đang kết nối: tab **Kết nối** (trạng thái, chủ sở hữu, lần liên lạc cuối, số tín hiệu đang chờ) hoặc `cd worker && npm run issue -- --list`.
+Xem VPS nào đang kết nối: tab **Kết nối** (trạng thái, chủ sở hữu, lần liên lạc cuối, số tín hiệu đang chờ). Admin cũng thấy Webhook URL chung đời cũ ở đó. Người dùng quên mật khẩu: Admin bấm **Đặt lại mật khẩu**. Admin duy nhất quên mật khẩu: xóa dòng Admin trong D1 Console của Cloudflare Dashboard rồi đặt lại `ADMIN_PASSWORD` (chi tiết ở `/help`).
 
 **Định tuyến tín hiệu.** Webhook của một người chỉ giao cho VPS của chính người đó (hoặc đúng một VPS nếu Webhook gắn với VPS). Webhook URL chung cũ (`WEBHOOK_KEY`) chỉ giao cho VPS của Admin/VPS đời cũ; thêm `&to=<server-id>[,<server-id>]` để chọn đích. Mỗi Server chỉ thấy và chỉ kéo được tín hiệu của chính nó; VPS bị khóa/xóa bị Worker từ chối (HTTP 403 `server_locked` / `server_revoked`).
 Trong một Server, chỉ các tài khoản MT5 khai ở `OCEAN_ACCOUNTS` mới nhận tín hiệu; mỗi tín hiệu chỉ đánh một lần cho mỗi tài khoản.

@@ -10,7 +10,9 @@ name: Deploy Worker
 #   CLOUDFLARE_API_TOKEN   token có quyền Workers Scripts:Edit và D1:Edit
 #   CLOUDFLARE_ACCOUNT_ID  ID tài khoản Cloudflare
 #   D1_DATABASE_ID         database_id thật của D1 "ocean-relay" (chỉ cần khi worker/wrangler.jsonc trong repo còn ID giả)
-# WEBHOOK_KEY, SYNC_KEY và ADMIN_PASSWORD là secret của Worker, đặt MỘT LẦN bằng `cd worker && npm run setup`; deploy không đụng tới chúng.
+# Secret của Worker (tùy chọn, đặt ở GitHub Secrets hoặc bằng `cd worker && npm run setup`):
+#   ADMIN_PASSWORD (>= 8 ký tự), SYNC_KEY (>= 32 ký tự), WEBHOOK_KEY (>= 16 ký tự), ADMIN_USER (mặc định admin)
+#   Secret nào có ở GitHub thì bước cuối của workflow nạp vào Worker (không cần gõ lệnh trên máy dev); secret nào không có thì giữ nguyên giá trị đang có trên Worker.
 # Bộ cài Server có workflow riêng (release-server.yml, tag [release-server]).
 on:
   push:
@@ -95,3 +97,24 @@ jobs:
           done
           echo "::error::Deploy that bai ca 3 lan (xem log Wrangler o tren; kiem tra https://www.cloudflarestatus.com va quyen cua CLOUDFLARE_API_TOKEN)"
           exit 1
+
+      # Nạp secret của Worker từ GitHub Secrets (sau khi Worker đã tồn tại). Chỉ đụng tới secret nào GitHub có giá trị.
+      - name: Nạp secret của Worker (nếu có ở GitHub Secrets)
+        working-directory: worker
+        env:
+          S_ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          S_ADMIN_USER: ${{ secrets.ADMIN_USER }}
+          S_SYNC_KEY: ${{ secrets.SYNC_KEY }}
+          S_WEBHOOK_KEY: ${{ secrets.WEBHOOK_KEY }}
+        run: |
+          put() { # tên, độ dài tối thiểu
+            val="$(printenv "S_$1" || true)"
+            [ -n "$val" ] || return 0
+            if [ "${#val}" -lt "$2" ]; then echo "::error::Secret $1 phai tu $2 ky tu"; exit 1; fi
+            printf '%s' "$val" | npx wrangler secret put "$1" > /dev/null
+            echo "Da nap secret $1"
+          }
+          put ADMIN_PASSWORD 8
+          put ADMIN_USER 3
+          put SYNC_KEY 32
+          put WEBHOOK_KEY 16

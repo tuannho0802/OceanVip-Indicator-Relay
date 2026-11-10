@@ -1,9 +1,11 @@
 # Kiểm thử thủ công trên VPS (bộ cài + giao diện + Cloudflare Tunnel)
 
-Chuẩn bị: Worker đã deploy (`npm run setup` hoặc workflow `[deploy]`), có **Worker URL**, **WEBHOOK_KEY**, **SYNC_KEY**. Tải `OceanRelay-Setup.exe` từ GitHub Release `server-v<version>` (đối chiếu `SHA256SUMS.txt`: `Get-FileHash .\OceanRelay-Setup.exe`).
+> Tài liệu cho người kiểm thử/kỹ thuật. **Người dùng cuối không cần các script PowerShell dưới đây**: lấy mã và Webhook URL ở trang quản lý Worker, kiểm tra ở mục Trạng thái trên trang Cài đặt của VPS và nút **Gửi thử** (xem [USER-GUIDE.md](USER-GUIDE.md)).
+
+Chuẩn bị: Worker đã deploy (workflow `[deploy]` hoặc `npm run setup`), có **Worker URL** và tài khoản trên trang quản lý (mã kết nối và Webhook URL lấy ở đó; `WEBHOOK_KEY` chỉ cần cho `test-alert.ps1` với URL chung). Tải `OceanRelay-Setup.exe` từ GitHub Release `server-v<version>` (đối chiếu `SHA256SUMS.txt`: `Get-FileHash .\OceanRelay-Setup.exe`).
 
 ## 1. Cài
-Chạy bộ cài bằng quyền Administrator, dán mã kết nối (`npm run issue` trong `worker/`). Hoặc im lặng:
+Chạy bộ cài bằng quyền Administrator, dán mã kết nối (lấy ở trang quản lý Worker: tab Kết nối → Lấy mã kết nối). Hoặc im lặng:
 ```powershell
 .\OceanRelay-Setup.exe /VERYSILENT /CODE=ocean1.xxxx /ACCOUNTS=<số tài khoản MT5>
 ```
