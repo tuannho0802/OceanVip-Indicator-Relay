@@ -447,7 +447,9 @@ describe('tương thích bản cũ và gỡ lỗi', () => {
     const ov = await j(await get('/api/overview', admin))
     const s = ov.servers.find((x: any) => x.id === id)
     expect(s).toMatchObject({ owner: null, status: 'online', locked: false })
-    now += 400
+    now += 700 // chu kỳ kéo bù tối đa 600s: vẫn còn online
+    expect((await j(await get('/api/overview', admin))).servers.find((x: any) => x.id === id).status).toBe('online')
+    now += 100
     expect((await j(await get('/api/overview', admin))).servers.find((x: any) => x.id === id).status).toBe('stale')
     await send('PATCH', `/api/servers/${id}`, { locked: true }, admin)
     expect((await pullAs(id, await keyOf(id))).status).toBe(403)

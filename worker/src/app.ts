@@ -33,7 +33,7 @@ const LOCK_SEC = 300
 const MAX_QUOTA = 1000
 const TEST_TEXT = 'OCEAN TEST | ping từ trang quản lý (không phải tín hiệu giao dịch)'
 
-type Deps = { now: number; fetchFn: typeof fetch }
+type Deps = { now: number; fetchFn: typeof fetch; retryMs?: readonly number[] }
 const err = (code: number, error: string, message: string, extra: Record<string, unknown> = {}): Response => json(code, { error, message, ...extra })
 
 const pub = (u: UserRow) => ({
@@ -425,7 +425,7 @@ export async function appRoute(req: Request, env: Env, ctx: Ctx, url: URL, deps:
         const ow = await env.DB.prepare('SELECT locked FROM users WHERE id = ?').bind(h.owner).first<{ locked: number }>()
         if (h.locked === 1 || ow?.locked === 1) return err(403, 'hook_locked', 'Webhook hoặc tài khoản đang bị khóa')
         const targets = await hookTargets(env, { owner: h.owner, server: h.server })
-        const sid = await storeAndDeliver(env, ctx, deps.fetchFn, { raw: TEST_TEXT, owner: h.owner, hook: h.id, targets, now })
+        const sid = await storeAndDeliver(env, ctx, deps.fetchFn, { raw: TEST_TEXT, owner: h.owner, hook: h.id, targets, now, retryMs: deps.retryMs })
         if (sid === null) return err(500, 'store_failed', 'Không lưu được tín hiệu thử')
         return json(200, { ok: true, id: sid, servers: targets.length })
       }

@@ -25,7 +25,7 @@ API (`GET/POST /api/setup`) **chỉ nhận yêu cầu từ chính VPS**: kết n
 | `OCEAN_GW_PORT` | 47860 | Cổng Gateway Server yêu cầu Gateway nghe (1024-65535, không trùng `OCEAN_PORT`). Trang Cài đặt › Nâng cao › Cổng Gateway (lưu ở `settings.json`) thắng biến này. Chỉ khi đã đặt rõ thì Server mới ép cổng lên Gateway |
 | `OCEAN_PUBLIC_URL` | trống | Địa chỉ HTTPS công khai (tunnel có tên); tắt Quick Tunnel |
 | `OCEAN_CLOUDFLARED` | tự tải | Đường dẫn cloudflared tự chỉ định |
-| `OCEAN_POLL_SEC` | 30 nếu Worker đẩy được, 5 nếu chỉ kéo | Chu kỳ kéo bù (2–600) |
+| `OCEAN_POLL_SEC` | 300 nếu Worker đẩy được, 5 nếu chỉ kéo | Chu kỳ kéo bù (2–600). Worker tự thử đẩy lại 3 lần khi lỗi; Server còn kéo bù ngay khi báo địa chỉ tunnel mới |
 | `OCEAN_WEBHOOK_KEY` | trống (tắt) | Webhook gọi thẳng Server |
 | `OCEAN_MAX_AGE_SEC` | 120 | Quá tuổi này không giao cho EA |
 | `OCEAN_DEDUPE_SEC` | 300 | Cửa sổ chống trùng |

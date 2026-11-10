@@ -38,7 +38,7 @@ Script gửi đúng khuôn text một dòng của indicator (giá ngẫu nhiên 
 - [ ] Alert hỏng (gửi `hello`) hiện là `unknown` kèm body gốc, không vỡ trang.
 - [ ] Gửi lại alert y hệt trong 5 phút: báo trùng, không thêm dòng mới.
 - [ ] Số tài khoản MT5 chỉ hiện 3 số cuối.
-- [ ] Tắt tác vụ rồi gửi alert: tín hiệu nằm lại ở Worker; bật lại Server, trong ~30 giây nó kéo bù về (tín hiệu quá `OCEAN_MAX_AGE_SEC` hiện là hết hạn, không giao EA).
+- [ ] Tắt tác vụ rồi gửi alert: tín hiệu nằm lại ở Worker; bật lại Server, nó kéo bù về ở nhịp kế tiếp (tối đa `OCEAN_POLL_SEC`, mặc định 300 giây) (tín hiệu quá `OCEAN_MAX_AGE_SEC` hiện là hết hạn, không giao EA).
 
 ## 6. Gateway + EA (demo)
 ```powershell

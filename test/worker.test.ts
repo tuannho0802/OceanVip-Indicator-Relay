@@ -36,7 +36,7 @@ const toVps = (async (input: string | URL | Request, init?: RequestInit) => {
   return fetch(String(input).replace(VPS, base), init)
 }) as typeof fetch
 
-const worker = (path: string, init: RequestInit = {}) => handle(new Request(`${WORKER}${path}`, init), env, ctx, { now: () => now, fetchFn: toVps })
+const worker = (path: string, init: RequestInit = {}) => handle(new Request(`${WORKER}${path}`, init), env, ctx, { now: () => now, fetchFn: toVps, retryMs: [0, 0, 0] })
 /** Server → Worker (kéo bù, báo địa chỉ): gọi thẳng mã Worker. */
 const toWorker = (async (input: string | URL | Request, init?: RequestInit) => worker(String(input).slice(WORKER.length), init)) as typeof fetch
 const hook = (body: string, key = WEBHOOK_KEY) => worker(`/webhook?key=${key}`, { method: 'POST', body })
@@ -92,6 +92,36 @@ describe('Worker: webhook', () => {
     expect(st.signals).toHaveLength(1)
     expect(now - (st.signals[0] as { received_at: number }).received_at).toBe(20) // tuổi tính từ lúc Worker nhận
     expect(await pullItems()).toHaveLength(0)
+  })
+
+  it('push lỗi thoáng qua: Worker tự thử lại và giao được, không cần Server kéo bù', async () => {
+    await setTunnel(VPS)
+    let calls = 0
+    const flaky = (async (i: string | URL | Request, init?: RequestInit) => {
+      if (++calls < 3) throw new Error('tunnel chập chờn')
+      return toVps(i, init)
+    }) as typeof fetch
+    const r = await handle(new Request(`${WORKER}/webhook?key=${WEBHOOK_KEY}`, { method: 'POST', body: SELL }), env, ctx, { now: () => now, fetchFn: flaky, retryMs: [0, 0, 0] })
+    expect(r.status).toBe(200)
+    await settle()
+    expect(calls).toBe(3)
+    expect((await state()).signals).toHaveLength(1)
+    expect(await pullItems()).toHaveLength(0)
+  })
+
+  it('push bị VPS từ chối bằng 4xx thì không thử lại; 5xx thì thử hết lượt rồi để kéo bù', async () => {
+    await setTunnel(VPS)
+    for (const [status, expected] of [[401, 1], [502, 3]] as const) {
+      let calls = 0
+      const bad = (async () => {
+        calls++
+        return new Response('x', { status })
+      }) as typeof fetch
+      await handle(new Request(`${WORKER}/webhook?key=${WEBHOOK_KEY}`, { method: 'POST', body: SELL }), env, ctx, { now: () => now, fetchFn: bad, retryMs: [0, 0, 0] })
+      await settle()
+      expect(calls).toBe(expected)
+    }
+    expect((await pullItems()).length).toBeGreaterThan(0) // vẫn nằm trong hàng đợi chờ kéo bù
   })
 
   it('push và kéo bù cùng chuyển một tín hiệu: Server chỉ nhận một lần (theo wid)', async () => {
@@ -215,7 +245,51 @@ describe('Server: /api/ingest do Worker đẩy', () => {
   })
 })
 
+describe('Worker: heartbeat', () => {
+  it('chỉ ghi seen vào D1 khi đã cũ hơn 60 giây (poll dày không ăn hạn mức ghi)', async () => {
+    const seen = () => (env.DB.raw.prepare("SELECT seen FROM servers WHERE id = ''").get() as { seen: number }).seen
+    await worker('/api/pull', { headers: auth })
+    const first = seen()
+    expect(first).toBe(now)
+    now += 30
+    await worker('/api/pull', { headers: auth })
+    expect(seen()).toBe(first) // chưa quá 60 giây: không ghi
+    now += 40
+    await worker('/api/pull', { headers: auth })
+    expect(seen()).toBe(now)
+  })
+})
+
 describe('WorkerSync', () => {
+  it('báo địa chỉ tunnel mới xong thì kéo bù ngay, không chờ nhịp định kỳ', async () => {
+    await mkSync().pullOnce() // đăng ký Server với Worker
+    await hook(SELL) // chưa có địa chỉ: Worker không đẩy được, tín hiệu nằm chờ
+    await settle()
+    expect((await state()).signals).toHaveLength(0)
+    const s = mkSync()
+    s.start(false) // nhịp định kỳ còn rất xa (30s)
+    s.setPublicUrl(VPS)
+    for (let i = 0; i < 100 && (await state()).signals.length === 0; i++) await new Promise((r) => setTimeout(r, 10))
+    s.stop()
+    expect((await state()).signals).toHaveLength(1)
+    expect(await pullItems()).toHaveLength(0)
+  })
+  it('báo lại cùng địa chỉ đã báo thì không kéo thêm lần nào', async () => {
+    let pulls = 0
+    const counting = (async (i: string | URL | Request, init?: RequestInit) => {
+      if (String(i).endsWith('/api/pull')) pulls++
+      return toWorker(i, init)
+    }) as typeof fetch
+    const s = new WorkerSync({ workerUrl: WORKER, syncKey: SYNC_KEY, pollSec: 30, log: quiet, ingest: app.ingestFromWorker, fetchFn: counting })
+    s.start(false)
+    s.setPublicUrl(VPS)
+    for (let i = 0; i < 100 && pulls === 0; i++) await new Promise((r) => setTimeout(r, 10))
+    expect(pulls).toBe(1)
+    s.setPublicUrl(VPS)
+    await new Promise((r) => setTimeout(r, 60))
+    s.stop()
+    expect(pulls).toBe(1)
+  })
   it('Worker báo 401 (SYNC_KEY sai) → ghi lỗi rõ ràng, không ném', async () => {
     const bad = new WorkerSync({ workerUrl: WORKER, syncKey: 'k'.repeat(40), pollSec: 30, log: quiet, ingest: app.ingestFromWorker, fetchFn: toWorker })
     expect(await bad.pullOnce()).toBe(false)

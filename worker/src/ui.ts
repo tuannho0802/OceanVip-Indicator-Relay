@@ -220,8 +220,8 @@ const CLIENT_JS = String.raw`
     if (s.owner_locked) return 'Tài khoản chủ VPS đang bị khóa nên VPS ngừng hoạt động.'
     if (s.status === 'never') return 'Chưa có liên lạc nào. Trên chính VPS, mở http://127.0.0.1:8090/#setup, dán mã kết nối (nút “Lấy mã kết nối”) rồi bấm “Lưu và kiểm tra kết nối”.'
     if (s.status === 'stale') return 'Mất liên lạc ' + ago(s.seen_ago) + '. Kiểm tra VPS đang bật, có Internet và dịch vụ OCEAN Relay đang chạy. Chỉ kéo bù được tín hiệu trong vòng 1 giờ gần nhất.'
-    if (!s.has_url) return 'VPS chưa báo địa chỉ tunnel nên Worker chưa đẩy trực tiếp được; VPS vẫn nhận bằng kéo bù mỗi ~30 giây (trễ tối đa ~30 giây).'
-    if (s.pending > 0) return 'Đang chờ ' + s.pending + ' tín hiệu chưa giao, VPS sẽ kéo trong vài chục giây.'
+    if (!s.has_url) return 'VPS chưa báo địa chỉ tunnel nên Worker chưa đẩy trực tiếp được; VPS vẫn nhận bằng kéo bù theo chu kỳ OCEAN_POLL_SEC (mặc định 5 phút khi có tunnel, 5 giây khi chưa có), nên có thể trễ.'
+    if (s.pending > 0) return 'Đang chờ ' + s.pending + ' tín hiệu chưa giao, Worker đang thử đẩy lại; nếu không được VPS sẽ kéo ở nhịp tới.'
     return ''
   }
 
@@ -403,7 +403,7 @@ const CLIENT_JS = String.raw`
           ['Dán trang chủ Worker (không có /webhook) vào TradingView', 'URL phải có đuôi /webhook?key=…', 'Chỉ dùng URL do nút “Tạo Webhook URL” sinh ra.'],
           ['VPS “Chưa kết nối”', 'Chưa dán mã trên VPS, hoặc dán sai VPS (mỗi VPS một mã riêng).', 'Làm lại bước 2; mã đã dán ở VPS khác thì tạo VPS mới.'],
           ['VPS “Mất liên lạc”', 'VPS tắt, mất mạng, dịch vụ OCEAN Relay không chạy; hoặc bị Admin khóa.', 'Bật lại VPS/dịch vụ; xem huy hiệu Worker ở trang Cài đặt trên VPS (báo 403 = bị khóa, 401 = mã sai/đã xóa).'],
-          ['Gửi thử nhưng VPS không nhận', 'VPS chưa báo địa chỉ tunnel nên Worker không đẩy trực tiếp được.', 'Không sao: VPS tự kéo bù mỗi ~30 giây; nếu quá 1 phút vẫn không thấy, kiểm tra trạng thái VPS.'],
+          ['Gửi thử nhưng VPS không nhận', 'VPS chưa báo địa chỉ tunnel nên Worker không đẩy trực tiếp được.', 'Cần VPS báo địa chỉ tunnel để Worker đẩy trực tiếp; nếu quá vài phút vẫn không thấy, kiểm tra trạng thái VPS và tunnel.'],
           ['Không tạo được VPS/Webhook mới', 'Hết hạn mức hoặc Admin đang khóa việc thêm mới.', 'Liên hệ Admin tăng hạn mức hoặc mở khóa.']
         ].map(function (r) { return h('tr', null, r.map(function (c) { return h('td', { text: c }) })) }))),
       h('p', { class: 'muted' }, 'Hướng dẫn vận hành Worker dành cho Admin: ', h('a', { href: '/help', text: '/help' })))

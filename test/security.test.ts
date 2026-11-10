@@ -124,10 +124,11 @@ describe('cấu hình', () => {
         expect(() => loadConfig({ ...ok, OCEAN_SYNC_KEY: 'a'.repeat(20), OCEAN_WORKER_URL: 'https://w.workers.dev' })).toThrow(/32-128/)
         expect(() => loadConfig({ ...ok, OCEAN_PUBLIC_URL: 'https://x.com/path' })).toThrow(/OCEAN_PUBLIC_URL/)
     })
-    it('chu kỳ kéo bù: mặc định 30s khi Worker đẩy được, 5s khi chỉ kéo; giới hạn 2-600', () => {
+    it('chu kỳ kéo bù: mặc định 300s khi Worker đẩy được, 5s khi chỉ kéo; giới hạn 2-600', () => {
         const w = { ...ok, OCEAN_SYNC_KEY: 'a'.repeat(32), OCEAN_WORKER_URL: 'https://w.workers.dev' }
-        expect(loadConfig({ ...w, OCEAN_QUICK_TUNNEL: '1' }).pollSec).toBe(30)
-        expect(loadConfig({ ...w, OCEAN_PUBLIC_URL: 'https://vps.example.com' }).pollSec).toBe(30)
+        expect(loadConfig({ ...w, OCEAN_QUICK_TUNNEL: '1' }).pollSec).toBe(300)
+        expect(loadConfig({ ...w, OCEAN_PUBLIC_URL: 'https://vps.example.com' }).pollSec).toBe(300)
+        expect(loadConfig({ ...w, OCEAN_QUICK_TUNNEL: '1', OCEAN_POLL_SEC: '45' }).pollSec).toBe(45)
         expect(loadConfig(w).pollSec).toBe(5)
         expect(() => loadConfig({ ...w, OCEAN_POLL_SEC: '1' })).toThrow(ConfigError)
     })

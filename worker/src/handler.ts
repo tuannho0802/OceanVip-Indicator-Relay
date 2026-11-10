@@ -51,6 +51,7 @@ export type Ctx = { waitUntil(p: Promise<unknown>): void }
 
 const MAX_BODY = 16 * 1024
 const PULL_WINDOW_SEC = 3600
+const SEEN_EVERY_SEC = 60
 const KEEP_SEC = 7 * 86400
 
 const bearer = (req: Request): string => {
@@ -85,7 +86,7 @@ async function readCapped(req: Request, max: number): Promise<string | null> {
   return new TextDecoder().decode(all)
 }
 
-type Deps = { now?: () => number; fetchFn?: typeof fetch }
+type Deps = { now?: () => number; fetchFn?: typeof fetch; /** Chỉ test dùng: chờ giữa các lần thử đẩy (mặc định PUSH_RETRY_MS). */ retryMs?: readonly number[] }
 
 export async function handle(req: Request, env: Env, ctx: Ctx, deps: Deps = {}): Promise<Response> {
   try {
@@ -137,7 +138,7 @@ async function route(req: Request, env: Env, ctx: Ctx, deps: Deps): Promise<Resp
         targets = await broadcastTargets(env)
       }
     }
-    const id = await storeAndDeliver(env, ctx, fetchFn, { raw, owner: hook?.owner ?? null, hook: hook?.id ?? null, targets, now })
+    const id = await storeAndDeliver(env, ctx, fetchFn, { raw, owner: hook?.owner ?? null, hook: hook?.id ?? null, targets, now, retryMs: deps.retryMs })
     if (id === null) return json(500, { error: 'store_failed' })
     if (hook) ctx.waitUntil(env.DB.prepare('UPDATE hooks SET last_used = ?, hits = hits + 1 WHERE id = ?').bind(now, hook.id).run())
     // Dọn tín hiệu cũ thỉnh thoảng (không cần cron): mỗi ~1/50 lần nhận.
@@ -159,7 +160,8 @@ async function route(req: Request, env: Env, ctx: Ctx, deps: Deps): Promise<Resp
       const row = await env.DB.prepare('SELECT s.locked, (SELECT locked FROM users WHERE id = s.owner) AS owner_locked FROM servers s WHERE s.id = ?').bind(server).first<{ locked: number; owner_locked: number | null }>()
       if (row && (row.locked === 1 || row.owner_locked === 1)) return json(403, { error: 'server_locked', message: 'VPS hoặc tài khoản đang bị Admin khóa' })
     }
-    await env.DB.prepare('INSERT INTO servers (id, seen, created) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET seen = excluded.seen').bind(server, now, now).run()
+    // Heartbeat: chỉ ghi D1 khi `seen` đã cũ hơn SEEN_EVERY_SEC (đăng ký lần đầu vẫn ghi ngay). Nhờ vậy poll dày cũng không ăn hạn mức ghi.
+    await env.DB.prepare('INSERT INTO servers (id, seen, created) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET seen = excluded.seen WHERE excluded.seen - servers.seen >= ?').bind(server, now, now, SEEN_EVERY_SEC).run()
 
     if (p === '/api/pull' && req.method === 'GET') {
       const rows = (
@@ -202,7 +204,7 @@ async function route(req: Request, env: Env, ctx: Ctx, deps: Deps): Promise<Resp
   }
 
   // 3) API quản lý (đăng nhập, người dùng, VPS, Webhook, tín hiệu) — xem app.ts.
-  const managed = await appRoute(req, env, ctx, url, { now, fetchFn })
+  const managed = await appRoute(req, env, ctx, url, { now, fetchFn, retryMs: deps.retryMs })
   if (managed) return managed
 
   // 4) Công khai: kiểm tra sống, hướng dẫn (không chứa khóa) và trang quản lý (phải đăng nhập mới có dữ liệu).

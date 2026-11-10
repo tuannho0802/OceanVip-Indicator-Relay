@@ -25,7 +25,8 @@ const MAX_RAW = 16 * 1024
  *  1. kéo bù các tín hiệu mà Worker chưa đẩy được (VPS/tunnel sập đúng lúc alert bắn);
  *  2. báo cho Worker biết địa chỉ Quick Tunnel hiện tại (đổi mỗi lần cloudflared chạy lại);
  *  3. xác nhận (ack) những tín hiệu đã nhận để lần sau không kéo lại.
- * Kéo bù mỗi `pollSec` giây: 30 giây ≈ 2.9 nghìn request/ngày trong tổng 100 nghìn của gói free.
+ * Worker đã tự thử đẩy lại khi lỗi nên kéo bù chỉ là lưới an toàn, mặc định 300 giây ≈ 288 request/ngày trong tổng 100 nghìn của gói free.
+ * Ngoài nhịp định kỳ, Server kéo bù NGAY sau khi báo địa chỉ tunnel mới (lúc dễ hụt tín hiệu nhất).
  */
 export class WorkerSync {
     lastPollOk = 0
@@ -65,8 +66,8 @@ export class WorkerSync {
                 this.o.log.error(`worker: ${String(e).slice(0, 160)}`)
             }
             if (this.stopped) return
-            // Lỗi thì thử lại thưa hơn một chút để không dồn request vào Worker đang trục trặc.
-            const wait = ok ? this.o.pollSec : Math.min(this.o.pollSec * 2, 120)
+            // Lỗi thì thử lại thưa hơn một chút để không dồn request vào Worker đang trục trặc (không bao giờ dày hơn chu kỳ thường).
+            const wait = ok ? this.o.pollSec : Math.max(this.o.pollSec, Math.min(this.o.pollSec * 2, 120))
             this.timer = setTimeout(() => void tick(), wait * 1000)
             this.timer.unref()
         }
@@ -85,11 +86,24 @@ export class WorkerSync {
     /** Địa chỉ VPS mà Worker nên đẩy tới (null = chưa có/đã rớt). Gửi ngay, và tự gửi lại ở các nhịp sau nếu lỗi. */
     setPublicUrl(url: string | null): void {
         this.desiredUrl = url
-        if (!this.stopped) void this.reportUrl().catch(() => { })
+        if (this.stopped) return
+        // Vừa báo xong địa chỉ mới thì kéo bù một lần: tín hiệu bắn trong lúc tunnel đổi địa chỉ đang nằm chờ ở Worker.
+        void this.reportUrl().then((changed) => (changed && url !== null ? this.catchUp() : undefined)).catch(() => { })
     }
 
-    private async reportUrl(): Promise<void> {
-        if (this.desiredUrl === undefined || this.desiredUrl === this.reportedUrl) return
+    private async catchUp(): Promise<void> {
+        if (this.running) return
+        this.running = true
+        try {
+            await this.pullOnce()
+        } finally {
+            this.running = false
+        }
+    }
+
+    /** true = vừa báo một địa chỉ mới lên Worker. */
+    private async reportUrl(): Promise<boolean> {
+        if (this.desiredUrl === undefined || this.desiredUrl === this.reportedUrl) return false
         const want = this.desiredUrl
         const res = await this.f(`${this.o.workerUrl}/api/tunnel`, {
             method: 'POST',
@@ -101,6 +115,7 @@ export class WorkerSync {
         if (!res.ok) throw new Error(`báo địa chỉ lên Worker: HTTP ${res.status}`)
         this.reportedUrl = want
         this.o.log.info(want ? `worker: đã báo địa chỉ ${want}` : 'worker: đã báo tunnel rớt')
+        return true
     }
 
     /** Một nhịp: báo địa chỉ (nếu còn chưa báo được) rồi kéo bù. Trả về true nếu Worker trả lời bình thường. */

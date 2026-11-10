@@ -119,7 +119,8 @@ export function loadConfig(baseEnv: NodeJS.ProcessEnv = process.env, settings: S
   const port = int(env, 'OCEAN_PORT', 8090, 1, 65535)
   const gatewayPort = int(env, 'OCEAN_GW_PORT', DEFAULT_GW_PORT, MIN_GW_PORT, MAX_PORT)
   if (gatewayPort === port) throw new ConfigError(`Cổng Gateway (${gatewayPort}) không được trùng cổng Server (${port}). Chọn một cổng khác.`)
-  // Worker đẩy được về VPS khi có địa chỉ công khai; không có thì chỉ còn cách Server tự kéo nên kéo dày hơn.
+  // Worker đẩy được về VPS khi có địa chỉ công khai (và tự thử lại khi lỗi), nên kéo bù chỉ là lưới an toàn: 300 giây ≈ 288 request/ngày.
+  // Không có địa chỉ công khai thì kéo là đường duy nhất nên kéo dày hơn (5 giây ≈ 17 nghìn request/ngày: nên dùng Quick Tunnel/domain).
   const pushable = publicUrl !== '' || quickTunnel
   return {
     port,
@@ -135,7 +136,7 @@ export function loadConfig(baseEnv: NodeJS.ProcessEnv = process.env, settings: S
     serverId,
     accounts: [...new Set(accounts)],
     workerUrl,
-    pollSec: int(env, 'OCEAN_POLL_SEC', pushable ? 30 : 5, 2, 600),
+    pollSec: int(env, 'OCEAN_POLL_SEC', pushable ? 300 : 5, 2, 600),
     publicUrl,
     quickTunnel,
     cloudflared: (env.OCEAN_CLOUDFLARED ?? '').trim(),
