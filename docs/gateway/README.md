@@ -4,7 +4,7 @@ Cầu nối giữa EA (text, MQL5 không cần JSON) và Server (JSON). Chỉ ng
 
 | Tệp | Vai trò |
 |---|---|
-| `gateway.ts` | `Gateway.handlePing(body)`: parse `khóa=giá trị`, gửi ping JSON, kiểm chữ ký từng tín hiệu, lọc khung giờ (`skipped_tf`), ánh xạ symbol, tạo dòng `S|…`/`U|…`. Giữ ack trong bộ nhớ khi mất mạng (tối đa 200) |
+| `gateway.ts` | `Gateway.handlePing(body)`: parse `khóa=giá trị`, gửi ping JSON, kiểm chữ ký từng tín hiệu, lọc khung giờ (`skipped_tf`), ánh xạ symbol, tạo dòng `S|…`/`U|…`. Giữ ack trong bộ nhớ khi mất mạng (tối đa 200). Chuyển tiếp `ord=` (lệnh chờ) và `cfg=` (setup EA) lên Server |
 | `main.ts` | Nạp `gateway.env`, log tệp; mỗi 5 giây: `syncConfig()` (hỏi Server cổng/khung giờ/symbol, báo cổng đang nghe) rồi `ensureListening()` (mở hoặc đổi cổng) |
 
 ## Cổng cục bộ (đổi được, không cần cài lại)

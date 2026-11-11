@@ -57,3 +57,9 @@ details.card summary{cursor:pointer;font-weight:600}
 pre.cmd{margin:6px 0 4px;padding:8px 10px;background:var(--bg);border:1px solid var(--line);border-radius:6px;white-space:pre-wrap;word-break:break-all;font-size:12.5px}pre.cmd code{border:0;padding:0;background:none}
 details.mt4{margin-top:14px}details.mt4 summary{cursor:pointer;font-weight:600}
 .setup code{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.chip{padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600;border:1px solid var(--line);color:var(--muted)}
+.chip.on{color:var(--buy);border-color:var(--buy)}.chip.off{color:var(--muted)}
+.setup-det{margin-top:8px}.setup-det summary{cursor:pointer;font-size:12px;color:var(--muted);font-weight:600}
+.setup-det td:first-child{color:var(--muted)}

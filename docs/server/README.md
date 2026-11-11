@@ -8,7 +8,7 @@ Node 22.13+, SQLite (`node:sqlite`), không phụ thuộc thư viện ngoài. Đ
 | `config.ts` | `loadConfig(env, settings)` kiểm tra mọi biến `OCEAN_*` rồi áp `settings.json` lên trên (khóa dài/ký tự, Worker URL đi cùng SYNC_KEY, URL dạng `https://host`). Ném `ConfigError` với thông báo rõ |
 | `app.ts` | HTTP: webhook trực tiếp, `/api/ingest`, `/api/gw/ping`, `/api/gw/config`, `/api/state|info|health`, `POST /api/signals/purge` (nút xóa log, chỉ từ chính VPS), tệp tĩnh. Chống dò khóa, che tài khoản, header bảo mật. `createApp(cfg, deps)` nhận `clock` để test |
 | `retention.ts` | Cron dọn tín hiệu đã xong (tương ứng `worker/src/retention.ts`): mỗi ngày một lần vào giờ `OCEAN_RETENTION_HOUR` (mặc định 03:00 giờ VPS), xóa tín hiệu cũ hơn `retentionDays` (mặc định 7, 0 = tắt), dọn bù nếu VPS tắt đúng giờ đó; `purgeNow` dùng chung cho nút xóa thủ công; giữ tín hiệu còn hạn giao cho EA |
-| `db.ts` | `Store` trên SQLite, migration theo `PRAGMA user_version` (v1 bảng gốc, v2 `wid`/`src`/`meta`). Con trỏ terminal, giao/ack, chống trùng |
+| `db.ts` | `Store` trên SQLite, migration theo `PRAGMA user_version` (v1 bảng gốc, v2 `wid`/`src`/`meta`, v3 `terminals.setup`/`orders`). Con trỏ terminal, giao/ack, chống trùng |
 | `settings.ts` | Đọc/ghi nguyên tử `settings.json`, kiểm tra dữ liệu người dùng nhập (tiếng Việt, rõ lỗi), gộp vào env |
 | `setup.ts` | `SetupController`: lưu cài đặt từ giao diện (kiểm tra → thử dựng cấu hình → ghi tệp → áp vào `cfg` → dựng lại Worker/tunnel) |
 | `runtime.ts` | `Runtime`: giữ `WorkerSync` + `QuickTunnel`; `apply()` dựng lại theo cấu hình hiện hành và thử liên lạc Worker một lần |
@@ -23,5 +23,6 @@ Node 22.13+, SQLite (`node:sqlite`), không phụ thuộc thư viện ngoài. Đ
 - **IP thật**: chỉ tin `cf-connecting-ip` khi kết nối đến từ loopback (tunnel).
 - **Trang Cài đặt chỉ cho máy cục bộ** (`isLocalAdmin` trong `app.ts`): loopback + không có header của tunnel + Host/Origin đúng + header `x-ocean-setup`. Giao diện bị lộ ra Internet qua tunnel (chỉ xem) nên yêu cầu qua tunnel luôn bị 403.
 - **Cấu hình xuống Gateway**: `/api/gw/ping` trả kèm `config: {tfs, symbolMap}` (null = để Gateway dùng `gateway.env`). `/api/gw/config` (Gateway gọi mỗi 5 giây) trả thêm `gatewayPort` và nhận lại cổng Gateway đang nghe thật + lỗi (cổng bị chiếm...), để trang Cài đặt hiện trạng thái Gateway (`/api/info.gateway`, chỉ cho máy cục bộ).
+- **Bù lệnh**: `/api/gw/ping` lưu `setup`/`orders` do EA báo (qua Gateway) và, nếu EA bật bù lệnh (`makeupWindow`), giao lại tín hiệu còn dở bằng `Store.makeupCandidates` (xem PROTOCOL.md). `Store.ack` không cho `received` ghi đè kết quả cụ thể. `/api/state` trả thêm `setup`, `orders` cho từng terminal (giao diện hiện chip bật/tắt, bảng Setup, bảng lệnh chờ).
 - **Terminal mới** không nhận tín hiệu cũ.
 - Đổi schema: thêm phần tử vào `MIGRATIONS`, không sửa phần tử cũ.

@@ -16,12 +16,38 @@ function signalCard(s,now){
   else{c.append(el('div','del','Lý do: '+(s.note||'')));c.append(el('div','raw',s.raw))}
   if(s.kind!=='unknown'){const d=s.deliveries.length?'Terminal: '+s.deliveries.map(x=>x.tid+' → '+x.result).join(' · '):(s.expired?'Quá hạn, không giao cho EA':'Chưa terminal nào nhận');c.append(el('div','del',d))}
   return c}
+const ON=v=>v==='1'||v==='true';
+const SETUP_LABELS=[['InpAllowTrading','Đánh lệnh (công tắc tổng)','b'],['InpLotPerOrder','Lot mỗi lệnh'],['InpMaxTotalLots','Tổng lot tối đa'],['InpTP3Only','Chỉ 1 lệnh TP3','b'],['InpMaxAgeSec','Bỏ tín hiệu cũ hơn (s)'],['InpMaxDevPips','Sai số giá cho phép (pip)'],['InpMaxDevPoints','Sai số giá cho phép (point)'],['InpSlippagePts','Trượt giá tối đa (point)'],['InpCloseBadFill','Đóng lệnh khớp lệch','b'],['InpRetrySec','Thử lại mỗi (s)'],['InpRetryMaxSec','Thử lại tối đa (s)'],['InpMakeupEnable','Bù lệnh','b'],['InpMakeupExpirySec','Hạn bù / lệnh chờ (s)'],['InpBEEnable','BreakEven','b'],['InpBETrigger','Kích hoạt BreakEven',v=>'Sau TP'+v],['InpBEOffset','Khoảng cách BE (N)'],['InpBEUnit','Đơn vị N',v=>v==='1'?'pip':'giá'],['InpBELockProfit','BE khóa lãi','b'],['InpMagic','Magic'],['InpComment','Comment']];
+const ORD_NAME={buylimit:'Buy Limit',buystop:'Buy Stop',selllimit:'Sell Limit',sellstop:'Sell Stop'};
+function chip(label,on){return el('span','chip '+(on?'on':'off'),label+': '+(on?'BẬT':'TẮT'))}
+function setupBlock(t){
+  const S=t.setup,box=el('div','setup-box');
+  if(!S){box.append(el('div','del','EA chưa báo cấu hình (EA đời cũ): cập nhật EA lên bản mới để xem Setup và dùng bù lệnh.'));return box}
+  const trading=ON(S.InpAllowTrading);
+  const chips=el('div','chips');chips.append(chip('Đánh lệnh',trading),chip('BreakEven',trading&&ON(S.InpBEEnable)),chip('Bù lệnh',trading&&ON(S.InpMakeupEnable)));
+  if(S.InpTP3Only!==undefined)chips.append(chip('Chỉ TP3',ON(S.InpTP3Only)));
+  box.append(chips);
+  const det=el('details','setup-det');det.append(el('summary','','Setup của terminal'));
+  const tb=el('table');const known=new Set();
+  for(const [k,label,f] of SETUP_LABELS){if(S[k]===undefined)continue;known.add(k);
+    const v=f==='b'?(ON(S[k])?'BẬT':'TẮT'):typeof f==='function'?f(S[k]):S[k];
+    const tr=el('tr');tr.append(el('td','',label),el('td','',v));tb.append(tr)}
+  for(const k of Object.keys(S)){if(known.has(k))continue;const tr=el('tr');tr.append(el('td','',k),el('td','',S[k]));tb.append(tr)}
+  det.append(tb);box.append(det);return box}
+function ordersBlock(t){
+  const O=t.orders||[];const box=el('div','orders-box');
+  box.append(el('div','del','Lệnh chờ ('+O.length+')'+(O.length?'':': không có')));
+  if(!O.length)return box;
+  const tb=el('table');const h=el('tr');for(const x of ['Ticket','Symbol','Loại','Lot','Giá','SL','TP','Hết hạn'])h.append(el('th','',x));tb.append(h);
+  for(const o of O){const tr=el('tr');tr.append(el('td','',o.ticket),el('td','',o.symbol),el('td',o.type.startsWith('buy')?'pos-buy':'pos-sell',ORD_NAME[o.type]||o.type),el('td','',fmt(o.volume)),el('td','',fmt(o.price)),el('td','',fmt(o.sl)),el('td','',fmt(o.tp)),el('td','',o.expires==null?'–':o.expires+'s'));tb.append(tr)}
+  box.append(tb);return box}
 function termCard(t,now){
   const c=el('div','card');const r=el('div','row');r.append(el('span','dot'+(t.online?' on':'')),el('b','',t.login?('#'+t.login):t.tid),el('span','tf',t.server||''),el('span','time',t.online?'online':'mất '+ago(now-t.last_seen)));c.append(r);
   const m=el('div','metrics');for(const [k,v] of [['Balance',t.balance],['Equity',t.equity],['Margin',t.margin],['Free margin',t.free_margin]]){const d=el('div');d.append(el('small','',k),el('span','',fmt(v)));m.append(d)}c.append(m);
   const P=t.positions||[];if(P.length){const tb=el('table');const h=el('tr');for(const x of ['Ticket','Symbol','Loại','Lot','Giá mở','SL','TP','P/L'])h.append(el('th','',x));tb.append(h);
     for(const p of P){const tr=el('tr');tr.append(el('td','',p.ticket),el('td','',p.symbol),el('td','pos-'+p.side,p.side),el('td','',fmt(p.volume)),el('td','',fmt(p.open)),el('td','',fmt(p.sl)),el('td','',fmt(p.tp)),el('td',p.profit>=0?'pos-buy':'pos-sell',fmt(p.profit)));tb.append(tr)}c.append(tb)}
   else c.append(el('div','del','Không có lệnh đang mở'));
+  c.append(ordersBlock(t));c.append(setupBlock(t));
   c.append(el('div','del','EA '+(t.ea_ver||'?')));return c}
 const ago2=s=>s==null?'chưa':ago(s)+' trước';
 async function poll(){

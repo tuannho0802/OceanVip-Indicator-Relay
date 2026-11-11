@@ -18,7 +18,7 @@ const SETUP_MAX_VALUE = 48
 const ORDERS_MAX = 100
 
 /** Mã lỗi giao dịch tạm thời (trùng `IsTransientRc` của EA): mất kết nối, requote, timeout, off quotes, quá nhiều yêu cầu... */
-const TRANSIENT_RC = new Set([4, 6, 8, 128, 135, 136, 137, 138, 141, 146, 10004, 10006, 10011, 10012, 10020, 10021, 10024, 10028, 10031])
+export const TRANSIENT_RC = new Set([4, 6, 8, 128, 135, 136, 137, 138, 141, 146, 10004, 10006, 10011, 10012, 10020, 10021, 10024, 10028, 10031])
 const TRANSIENT_WORDS = new Set(['no_connection', 'retry_timeout', 'no_quote'])
 
 /** `no_connection` / `failed:10031` / `failed_10031` là lỗi tạm thời (đáng bù); `failed:10019` (hết tiền)... thì không. */

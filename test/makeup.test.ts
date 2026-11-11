@@ -1,8 +1,12 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import os from 'node:os'
+import path from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { JSDOM } from 'jsdom'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Gateway } from '../src/gateway/gateway'
+import { Store } from '../src/server/db'
 import { type App, createApp } from '../src/server/app'
 import { MAX_MAKEUP_SEC, isIncompleteResult, makeupWindow, parseCfgLine, sanitizeOrders, sanitizeSetup } from '../src/shared/makeup'
 import { EA_KEY, WEBHOOK_KEY, baseCfg } from './helpers'
@@ -257,5 +261,32 @@ describe('/api/state hiện setup và lệnh chờ của EA', () => {
     const doc = await render()
     expect(doc.body.textContent).toContain('EA chưa báo cấu hình')
     expect(doc.getElementById('conn')?.textContent).toBe('kết nối tốt')
+  })
+})
+
+describe('nâng cấp DB từ phiên bản cũ (v2)', () => {
+  it('thêm cột setup/orders, giữ terminal cũ (setup null, orders rỗng)', () => {
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite')
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'ocean-mig-'))
+    try {
+      const f = path.join(dir, 'old.db')
+      const old = new DatabaseSync(f)
+      old.exec(`CREATE TABLE signals (id INTEGER PRIMARY KEY AUTOINCREMENT, received_at INTEGER NOT NULL, dedupe TEXT NOT NULL, kind TEXT NOT NULL, side TEXT, symbol TEXT, tf TEXT, entry REAL, sl REAL, tp1 REAL, tp2 REAL, tp3 REAL, tp REAL, status TEXT, raw TEXT NOT NULL, note TEXT, wid INTEGER, src TEXT NOT NULL DEFAULT 'hook');
+        CREATE TABLE terminals (tid TEXT PRIMARY KEY, first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL, cursor INTEGER NOT NULL DEFAULT 0, login TEXT, server TEXT, balance REAL, equity REAL, margin REAL, free_margin REAL, ea_ver TEXT, positions TEXT NOT NULL DEFAULT '[]');
+        CREATE TABLE deliveries (signal_id INTEGER NOT NULL, tid TEXT NOT NULL, result TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (signal_id, tid));
+        CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+        INSERT INTO terminals (tid, first_seen, last_seen, login) VALUES ('900001@Demo', 1, 2, '900001');
+        PRAGMA user_version = 2;`)
+      old.close()
+      const st = new Store(f)
+      expect((st.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(3)
+      const t = st.terminals()[0]
+      expect(t?.login).toBe('900001')
+      expect(t?.setup).toBeNull()
+      expect(t?.orders).toBe('[]')
+      st.db.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

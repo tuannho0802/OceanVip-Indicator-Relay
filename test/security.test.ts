@@ -149,7 +149,7 @@ describe('cơ sở dữ liệu', () => {
             a.db.close()
             const b = new Store(f)
             expect(b.getMeta('x')).toBe('1')
-            expect((b.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(2)
+            expect((b.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(3)
             b.db.close()
         } finally {
             rmSync(dir, { recursive: true, force: true })

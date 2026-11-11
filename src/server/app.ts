@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import path from 'node:path'
 import { SKEW_SEC, type WireSignal, safeEqual, sameSecret, signBody, signSignal } from '../shared/hmac'
+import { MAKEUP_RESEND_SEC, isIncompleteResult, makeupWindow, sanitizeOrders, sanitizeSetup } from '../shared/makeup'
 import { dedupeKey, parseAlert, riskReward } from '../shared/parse'
 import { APP_VERSION, type ServerConfig } from './config'
 import { type PurgeSpec, type SignalRow, Store } from './db'
@@ -111,6 +112,20 @@ export type App = {
 type PingPosition = { ticket: number; symbol: string; side: string; volume: number | null; open: number | null; sl: number | null; tp: number | null; profit: number | null }
 
 const numOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+
+/** Setup EA gửi lên -> JSON để lưu (undefined = ping này không gửi, giữ bản cũ). */
+const sanitizeSetupJson = (v: unknown): string | undefined => {
+  const s = sanitizeSetup(v)
+  return s ? JSON.stringify(s) : undefined
+}
+const parseSetup = (j: string | null): Record<string, string> | null => {
+  if (!j) return null
+  try {
+    return sanitizeSetup(JSON.parse(j))
+  } catch {
+    return null
+  }
+}
 
 export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
   const clock = deps.clock ?? (() => Math.floor(Date.now() / 1000))
@@ -257,6 +272,9 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
         free_margin: num(b.free_margin),
         ea_ver: str(b.ea_ver, 16),
         positions: Array.isArray(b.positions) ? JSON.stringify(positions) : undefined,
+        // Cấu hình (input) và lệnh chờ của EA: EA đời cũ không gửi thì giữ nguyên giá trị đã lưu (COALESCE).
+        setup: sanitizeSetupJson(b.setup),
+        orders: Array.isArray(b.orders) ? JSON.stringify(sanitizeOrders(b.orders)) : undefined,
       })
       if (Array.isArray(b.acks)) {
         for (const a of b.acks.slice(0, 50) as { id?: unknown; result?: unknown }[]) {
@@ -264,6 +282,15 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
         }
       }
       const rows = store.pending(tid, t.cursor, now - cfg.maxAgeSec, 10)
+      // Bù lệnh: EA bật bù (khai trong setup) thì giao lại tín hiệu còn dở, kể cả đã quá hạn bình thường, trong cửa sổ N giây của EA.
+      const mk = makeupWindow(parseSetup(t.setup))
+      if (mk > 0 && rows.length < 10) {
+        const extra = store.makeupCandidates(tid, t.cursor, now, {
+          makeupSec: mk, maxAgeSec: cfg.maxAgeSec, resendSec: MAKEUP_RESEND_SEC, isIncomplete: isIncompleteResult, limit: 10 - rows.length,
+        })
+        if (extra.length > 0) log.info(`bù lệnh: giao lại ${extra.length} tín hiệu còn dở cho ${tid} (#${extra.map((x) => x.id).join(', #')})`)
+        rows.push(...extra)
+      }
       const signals = await Promise.all(
         rows.map(async (s) => {
           const wire: WireSignal = {
@@ -304,6 +331,9 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
         login: maskLogin(t.login), server: t.server, balance: t.balance, equity: t.equity,
         margin: t.margin, free_margin: t.free_margin, ea_ver: t.ea_ver, last_seen: t.last_seen,
         positions: JSON.parse(t.positions) as unknown,
+        // Setup của EA (input) và lệnh chờ; setup null = EA đời cũ chưa báo.
+        setup: parseSetup(t.setup),
+        orders: JSON.parse(t.orders || '[]') as unknown,
         online: now - t.last_seen <= ONLINE_SEC,
       }))
       const view = (s: SignalRow) => ({

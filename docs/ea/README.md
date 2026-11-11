@@ -1,6 +1,6 @@
 # `ea/` — Expert Advisor MT5
 
-`OceanRelay.mq5` v0.3.0 (MQL5). Bản MT4 (`OceanRelay.mq4`) vẫn ở logic v0.2.0 (chưa có thử lại và sai số theo pip). **Chưa được biên dịch hay chạy trên MT5 thật** — thử trên DEMO.
+`OceanRelay.mq5` v0.4.0 (MQL5, có thử lại, sai số theo pip, bù lệnh). Bản MT4 (`OceanRelay.mq4`) v0.3.0: logic MT4 cũ (sai số theo point, chưa có hàng đợi thử lại) cộng bù lệnh. **Chưa được biên dịch hay chạy trên MT5 thật** — thử trên DEMO.
 
 ## Bản MT4 (`OceanRelay.mq4`)
 MT4 báo `err=5200` nếu `InpGateway` có cổng (`http://127.0.0.1:47860`). Dùng `InpGateway=http://127.0.0.1` + Allow WebRequest `http://127.0.0.1`, và chuyển cổng 80 sang cổng Gateway bằng `netsh interface portproxy` (lệnh đầy đủ: [OPERATIONS.md](../OPERATIONS.md), mục "MT4 (cổng 80)").
@@ -22,6 +22,32 @@ Sai số cho phép `InpMaxDevPips` (mặc định 10 pip; vàng 2 số lẻ: 1 p
 
 ## Thử lại khi mất kết nối (v0.3.0)
 Lỗi tạm thời (retcode `6` / `10031` mất kết nối, requote, timeout, off quotes, price changed, too many requests…) hoặc terminal đang mất kết nối: chân chưa mở được **thử lại mỗi `InpRetrySec` giây**, tối đa `InpRetryMaxSec` giây kể từ khi nhận tín hiệu, cho tới khi đủ 3 lệnh TP1/TP2/TP3, hoặc giá đi quá `InpMaxDevPips`, hoặc hết hạn. Lỗi không thể khắc phục (hết tiền, thị trường đóng…) thì dừng ngay. Ack: `retry:D/N` khi đang thử lại (D chân đã mở / N chân cần mở); kết thúc `opened:N`, `partial:D/N_<lý do>` hoặc mã lỗi. Hạn chế: khởi động lại/gỡ EA giữa chừng thì các lần thử lại đang chờ bị bỏ (id đã ghi nhận nên không mở lặp).
+
+## Bù lệnh (MT5 v0.4.0 · MT4 v0.3.0, mặc định TẮT)
+Chân TP1/TP2/TP3 còn thiếu thì đặt **lệnh chờ Limit/Stop tại Entry** của Signal (cùng SL/TP/comment `OCEAN#<số>/TPn`, nên BreakEven vẫn nhận ra khi khớp).
+
+| Input | Mặc định | Ý nghĩa |
+|---|---|---|
+| `InpMakeupEnable` | false | Bật/tắt bù lệnh (cần `InpAllowTrading=true`) |
+| `InpMakeupExpirySec` | 300 | N giây (30..1800): tín hiệu không quá N giây tuổi (kể cả đã quá `InpMaxAgeSec`) vẫn được bù; lệnh chờ tự hủy sau N giây kể từ lúc tín hiệu phát ra |
+
+**Khi nào bù**
+1. Tín hiệu đến trễ quá `InpMaxAgeSec` nhưng chưa quá N giây (terminal/EA không phản hồi lúc tín hiệu đến): thay vì `too_old`, bù cả các chân.
+2. Giá đã đi xa Entry quá sai số (`price_dev`) hoặc hết thời gian thử lại (`retry_timeout`, MT5): các chân chưa mở được chuyển thành lệnh chờ thay vì bỏ.
+3. MT4: chân lỗi tạm thời khi vào lệnh (mất kết nối, requote...) chuyển thành lệnh chờ.
+4. Server giao **lại** tín hiệu có ack còn dở (xem [PROTOCOL.md](../PROTOCOL.md)): EA kiểm từng chân, chân nào chưa có vị thế/lệnh chờ thì bù (dùng được cả sau khi EA khởi động lại).
+
+**Loại lệnh**: mua: Entry < Ask → Buy Limit, Entry > Ask → Buy Stop; bán: Entry > Bid → Sell Limit, Entry < Bid → Sell Stop. Giá đang sát Entry (trong sai số, hoặc gần hơn stops level) thì vào thị trường. Giá đã chạm/vượt SL của tín hiệu thì không bù (`bad_levels`). Lệnh chờ tính vào `InpMaxTotalLots`.
+
+**Hết hạn**: lệnh chờ đặt kèm hạn của sàn (`ORDER_TIME_SPECIFIED`; sàn không hỗ trợ thì GTC); EA còn tự hủy mỗi giây theo Global Variable `OCEANPX_<login>_<ticket>` (giờ server hết hạn).
+
+**Chống mở lặp**: trước mỗi chân kiểm vị thế đang mở, lệnh chờ và lịch sử 1 giờ theo comment; số thứ tự lệnh lưu ở Global Variable `OCEANID_<login>_<id>`; kết quả cuối không còn thiếu ghi `OCEANFIN_<login>_<id>`. Tín hiệu do EA đời cũ xử lý (không có `OCEANID_`) **không bù**, tránh nhân đôi lệnh khi nâng cấp.
+
+**Ack**: `pending:P` (P chân đã đặt chờ), `opened:D+pending:P`, `partial:(D+P)/N_<lý do>` (lý do như `no_connection`, `makeup_expired`, `max_lots`, `failed_<mã>`...). Lý do là lỗi tạm thời thì Server giao lại sau ≥ 15 giây để bù tiếp.
+
+**Báo lên Server**: mỗi nhịp `ord=` (lệnh chờ: ticket,symbol,type,vol,price,sl,tp,còn lại giây), mỗi 10 nhịp `cfg=` (các input như lot, sai số, bật/tắt đánh lệnh/BreakEven/bù lệnh; không gồm địa chỉ Gateway hay Terminal ID). Giao diện hiện chip bật/tắt, bảng Setup và bảng lệnh chờ của từng terminal.
+
+Hạn chế: chưa biên dịch/chạy trên MT4/MT5 thật, thử trên DEMO; tín hiệu cập nhật `U|` chưa được dùng để hủy lệnh chờ bù (lệnh chờ chỉ tự hủy theo hạn N giây).
 
 ## Bảo mật
 EA chỉ nói chuyện với Gateway cục bộ, không giữ khóa nào; chữ ký do Gateway kiểm. Lệnh mang `InpMagic` và comment `OCEAN#<số>/TPn`, trong đó `<số>` là số thứ tự lệnh **trong ngày** (giờ server broker): sang ngày mới đếm lại từ 1 (bộ đếm lưu ở Global Variable `OCEANSEQ_<login>`, khởi động lại EA vẫn đếm tiếp đúng). Id đã xử lý nằm ở Global Variable `OCEAN_<login>_<id>` nên khởi động lại không mở lệnh lần hai.

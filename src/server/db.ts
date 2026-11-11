@@ -39,6 +39,10 @@ export type TerminalRow = {
   free_margin: number | null
   ea_ver: string | null
   positions: string
+  /** JSON object: các input EA báo lên (khóa = tên input). null = EA chưa báo (EA đời cũ). */
+  setup: string | null
+  /** JSON array: lệnh chờ (Limit/Stop) của EA, gồm cả lệnh bù. */
+  orders: string
 }
 
 export type DeliveryRow = { signal_id: number; tid: string; result: string; at: number }
@@ -76,6 +80,9 @@ const MIGRATIONS: string[] = [
    ALTER TABLE signals ADD COLUMN src TEXT NOT NULL DEFAULT 'hook';
    CREATE UNIQUE INDEX signals_wid ON signals (wid) WHERE wid IS NOT NULL;
    CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);`,
+  // 3: EA báo cấu hình (input) và lệnh chờ để giao diện hiện Setup của terminal; Server dùng cấu hình để quyết định bù lệnh
+  `ALTER TABLE terminals ADD COLUMN setup TEXT;
+   ALTER TABLE terminals ADD COLUMN orders TEXT NOT NULL DEFAULT '[]';`,
 ]
 
 export class Store {
@@ -174,6 +181,8 @@ export class Store {
     free_margin?: number
     ea_ver?: string
     positions?: string
+    setup?: string
+    orders?: string
   }): TerminalRow {
     const ex = this.db.prepare('SELECT * FROM terminals WHERE tid = ?').get(t.tid) as TerminalRow | undefined
     if (!ex) {
@@ -186,7 +195,8 @@ export class Store {
       .prepare(
         `UPDATE terminals SET last_seen=?, login=COALESCE(?,login), server=COALESCE(?,server),
          balance=COALESCE(?,balance), equity=COALESCE(?,equity), margin=COALESCE(?,margin),
-         free_margin=COALESCE(?,free_margin), ea_ver=COALESCE(?,ea_ver), positions=COALESCE(?,positions) WHERE tid=?`,
+         free_margin=COALESCE(?,free_margin), ea_ver=COALESCE(?,ea_ver), positions=COALESCE(?,positions),
+         setup=COALESCE(?,setup), orders=COALESCE(?,orders) WHERE tid=?`,
       )
       .run(
         t.now,
@@ -198,6 +208,8 @@ export class Store {
         t.free_margin ?? null,
         t.ea_ver ?? null,
         t.positions ?? null,
+        t.setup ?? null,
+        t.orders ?? null,
         t.tid,
       )
     return this.db.prepare('SELECT * FROM terminals WHERE tid = ?').get(t.tid) as TerminalRow
@@ -219,10 +231,48 @@ export class Store {
       .all(cursor, minReceivedAt, tid, limit) as SignalRow[]
   }
 
+  /**
+   * Ghi kết quả EA báo. `received` (EA nhận lại tín hiệu đã xử lý) KHÔNG được ghi đè kết quả cụ thể đã có
+   * (`opened:3`, `pending:2`...), chỉ làm mới giờ ack; nếu chưa có bản ghi thì ghi bình thường.
+   */
   ack(tid: string, signalId: number, result: string, now: number): void {
-    this.db
-      .prepare('INSERT OR REPLACE INTO deliveries (signal_id, tid, result, at) VALUES (?,?,?,?)')
-      .run(signalId, tid, result.slice(0, 40), now)
+    const res = result.slice(0, 40)
+    if (res === 'received') {
+      const r = this.db.prepare('UPDATE deliveries SET at = ? WHERE signal_id = ? AND tid = ?').run(now, signalId, tid)
+      if (Number(r.changes) > 0) return
+    }
+    this.db.prepare('INSERT OR REPLACE INTO deliveries (signal_id, tid, result, at) VALUES (?,?,?,?)').run(signalId, tid, res, now)
+  }
+
+  /**
+   * Tín hiệu vào lệnh cần giao LẠI cho terminal để EA bù lệnh (đặt Limit/Stop cho chân còn thiếu), gồm hai loại:
+   *  1) chưa có bản ghi giao nhận nào và đã quá hạn bình thường (EA/terminal không phản hồi lúc tín hiệu đến): tuổi trong (maxAgeSec, makeupSec]
+   *  2) đã có ack nhưng kết quả còn dở (`isIncomplete`) và ack cuối đã cách `resendSec` giây: tuổi <= makeupSec
+   * Chỉ tín hiệu mới hơn con trỏ của terminal (terminal mới không nhận tín hiệu cũ).
+   */
+  makeupCandidates(
+    tid: string,
+    cursor: number,
+    now: number,
+    p: { makeupSec: number; maxAgeSec: number; resendSec: number; isIncomplete: (r: string) => boolean; limit: number },
+  ): SignalRow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT s.*, d.result AS d_result, d.at AS d_at FROM signals s
+         LEFT JOIN deliveries d ON d.signal_id = s.id AND d.tid = ?
+         WHERE s.id > ? AND s.kind = 'entry' AND s.received_at >= ?
+         ORDER BY s.id ASC LIMIT 200`,
+      )
+      .all(tid, cursor, now - p.makeupSec) as (SignalRow & { d_result: string | null; d_at: number | null })[]
+    const out: SignalRow[] = []
+    for (const r of rows) {
+      const age = now - r.received_at
+      const { d_result, d_at, ...sig } = r
+      const due = d_result === null ? age > p.maxAgeSec : p.isIncomplete(d_result) && now - (d_at ?? 0) >= p.resendSec
+      if (due) out.push(sig as SignalRow)
+      if (out.length >= p.limit) break
+    }
+    return out
   }
 
   deliveriesFor(signalIds: number[]): DeliveryRow[] {

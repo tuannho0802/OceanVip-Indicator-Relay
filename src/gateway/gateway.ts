@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { type Logger, nullLogger } from '../server/log'
 import { DEFAULT_GW_PORT, MAX_PORT, MIN_GW_PORT, isGwPort } from '../shared/defaults'
 import { safeEqual, signSignal } from '../shared/hmac'
+import { parseCfgLine } from '../shared/makeup'
 
 export type GatewayConfig = {
   port: number
@@ -137,6 +138,17 @@ export class Gateway {
         return { ticket: Number(ticket), symbol, side, volume: nz(vol), open: nz(open), sl: nz(sl), tp: nz(tp), profit: nz(profit) }
       })
 
+    // Lệnh chờ (gồm lệnh bù): ticket,symbol,type,vol,price,sl,tp,expires;...  (type: buylimit|buystop|selllimit|sellstop)
+    const orders = (kv.ord ?? '')
+      .split(';')
+      .filter(Boolean)
+      .map((p) => {
+        const [ticket, symbol, type, vol, price, sl, tp, exp] = p.split(',')
+        return { ticket: Number(ticket), symbol, type, volume: nz(vol), price: nz(price), sl: nz(sl), tp: nz(tp), expires: nz(exp) }
+      })
+    // Setup (input) của EA: EA chỉ gửi mỗi vài chục nhịp; ping không có `cfg` thì không gửi `setup` để Server giữ bản đã lưu.
+    const setup = parseCfgLine(kv.cfg)
+
     let res: Response
     try {
       res = await this.fetchFn(`${this.cfg.serverUrl}/api/gw/ping`, {
@@ -146,6 +158,9 @@ export class Gateway {
           tid, login, server,
           balance: nz(kv.bal), equity: nz(kv.eq), margin: nz(kv.mg), free_margin: nz(kv.fm),
           ea_ver: kv.ver, positions, acks,
+          // `ord=` luôn có trong ping của EA mới (rỗng = không có lệnh chờ); EA cũ không gửi thì để undefined.
+          orders: kv.ord !== undefined ? orders : undefined,
+          setup: setup ?? undefined,
         }),
         signal: AbortSignal.timeout(this.cfg.timeoutMs),
       })

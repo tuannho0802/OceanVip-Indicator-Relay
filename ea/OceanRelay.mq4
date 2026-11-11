@@ -1,9 +1,13 @@
 //+------------------------------------------------------------------+
-//| OceanRelay.mq4  v0.2.0  (DANH LENH + BREAKEVEN THEO TP1/TP2)    |
+//| OceanRelay.mq4  v0.3.0  (DANH LENH + BREAKEVEN + BU LENH)       |
 //| Ban MT4 (MQL4) cua OceanRelay.mq5, giu nguyen chuc nang.         |
 //| Ping Gateway cuc bo moi InpPingSec giay: gui tai khoan + lenh    |
 //| dang mo, nhan tin hieu OCEAN (da duoc Gateway kiem chu ky HMAC), |
 //| mo 3 lenh cung Entry/SL voi TP1/TP2/TP3, ack ket qua.            |
+//| v0.3.0: BU LENH (tuy chon, mac dinh TAT): chan nao con thieu     |
+//| (loi san/terminal, gia di xa, tin hieu den tre/EA khong phan hoi)|
+//| thi DAT BU lenh cho (Limit/Stop) tai Entry cua Signal, tu huy sau|
+//| N giay (InpMakeupExpirySec). EA bao Setup + lenh cho len Server. |
 //| BreakEven (tuy chon, mac dinh TAT): khi lenh TP1 (hoac TP2) chot |
 //| lai thi doi SL cac lenh con lai ve gan gia vao N don vi.         |
 //| EA chi noi chuyen voi Gateway/Server tren VPS (khong goi Worker).|
@@ -20,7 +24,7 @@
 
 #include <stdlib.mqh>
 
-#define EA_VER "0.2.0"
+#define EA_VER "0.3.0"
 
 input string InpGateway = "http://127.0.0.1:47860"; // Gateway cuc bo (phai nam trong Allow WebRequest)
 input int InpPingSec = 2;                           // Nhip ping (giay, toi thieu 1)
@@ -53,12 +57,16 @@ input double InpBEOffset = 3.0;                                                /
 input ENUM_BE_UNIT InpBEUnit = BE_UNIT_PRICE;                                  // Don vi N: GIA (XAUUSD: 3.0 = 3 USD) hoac PIP (1 pip = 10 point)
 input bool InpBELockProfit = false;                                            // false: SL phia LO (BUY: Entry-N, SELL: Entry+N). true: khoa lai (BUY: Entry+N, SELL: Entry-N)
 
+input group "=== BU LENH (mac dinh TAT) ===" input bool InpMakeupEnable = false; // BAT/TAT bu lenh: chan TP1/2/3 con thieu thi dat Limit/Stop tai Entry (chi hoat dong khi InpAllowTrading = true)
+input int InpMakeupExpirySec = 300;                                              // N: bu cho tin hieu khong qua N giay tuoi (ke ca da qua InpMaxAgeSec); lenh cho tu huy sau N giay ke tu luc tin hieu phat ra (30..1800)
+
 string g_acks = ""; // "12:received,13:received" gui kem o ping ke tiep
 ulong g_seen[64];   // id tin hieu da xu ly (tranh log lap khi Gateway giao lai truoc khi ack toi noi)
 int g_seenN = 0;
 uint g_nextPingMs = 0;
 int g_fail = 0;
 string g_last = "chua co tin hieu";
+int g_pingN = 0; // dem nhip ping: cu moi 10 nhip gui kem cfg= (Setup cua EA)
 
 //+------------------------------------------------------------------+
 int OnInit() {
@@ -73,7 +81,7 @@ int OnInit() {
     // Tre ngau nhien 0-2 giay truoc ping dau de nhieu EA khong ban cung luc.
     g_nextPingMs = GetTickCount() + (uint)(MathRand() % 2000);
     Print("OceanRelay ", EA_VER, " san sang. Gateway=", InpGateway, InpAllowTrading ? " | DANH LENH: BAT" : " | DANH LENH: TAT (chi theo doi)",
-          " | BREAKEVEN: ", BeLabel());
+          " | BREAKEVEN: ", BeLabel(), " | BU LENH: ", MakeupLabel());
     if (InpAllowTrading && !TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
         Print("OceanRelay: CANH BAO - Algo Trading dang tat tren terminal.");
     return INIT_SUCCEEDED;
@@ -85,6 +93,7 @@ void OnDeinit(const int reason) {
 }
 
 void OnTimer() {
+    CleanupPending();  // moi giay: huy lenh bu qua han (lop du phong ngoai han cua san)
     ManageBreakEven(); // moi giay, doc lap voi nhip ping Gateway
     uint now = GetTickCount();
     if ((int)(now - g_nextPingMs) < 0)
@@ -138,6 +147,10 @@ void Ping() {
     body += "fm=" + DoubleToString(AccountInfoDouble(ACCOUNT_FREEMARGIN), 2) + "\n";
     body += "ver=" + EA_VER + "\n";
     body += "pos=" + BuildPositions() + "\n";
+    body += "ord=" + BuildOrders() + "\n";
+    if (g_pingN % 10 == 0)
+        body += "cfg=" + BuildCfg() + "\n";
+    g_pingN++;
     body += "acks=" + g_acks + "\n";
     string sentAcks = g_acks;
 
@@ -199,7 +212,8 @@ void MarkDone(ulong id) { GlobalVariableSet(GvName(id), (double)TimeCurrent()); 
 //| Dong tin hieu:                                                   |
 //|  S|id|side|symbol|tf|entry|sl|tp1|tp2|tp3|ageSec                 |
 //|  U|id|side|status|symbol|tf|entry|sl|tp|ageSec                   |
-//| Ket qua ack: opened:N | trading_off | too_old | price_dev |       |
+//| Ket qua ack: opened:N | pending:N | opened:D+pending:P |         |
+//|  partial:D/N_<ly do> | trading_off | too_old | price_dev |        |
 //|  bad_levels | bad_stops | no_symbol | max_lots | failed:<ma>      |
 //+------------------------------------------------------------------+
 void HandleResponse(string text) {
@@ -215,7 +229,13 @@ void HandleResponse(string text) {
         if (id == 0)
             continue;
         if (Seen(id) || Done(id)) {
-            AddAck(id, "received");
+            // Server giao LAI tin hieu con do (ack cu: partial/loi tam thoi) de EA bu lenh. Chi lam khi: bat bu lenh, tin hieu da duoc
+            // EA nay danh dau, va chua ket thuc han (ket qua cuoi khong con thieu).
+            string r0 = "received";
+            if (f[0] == "S" && nf >= 11 && MakeupOn() && Done(id) && !IsFinal(id))
+                r0 = MakeupRedeliver(id, f[2], f[3], StringToDouble(f[5]), StringToDouble(f[6]),
+                                     StringToDouble(f[7]), StringToDouble(f[8]), StringToDouble(f[9]), (int)StringToInteger(f[10]));
+            AddAck(id, r0);
             continue;
         }
         Remember(id);
@@ -327,6 +347,397 @@ int NextSeq(int& day) {
 }
 
 //+------------------------------------------------------------------+
+//| BU LENH (MAKEUP)                                                 |
+//| Chan TP1/2/3 con thieu (loi san/terminal, gia di xa Entry, tin   |
+//| hieu den tre) thi DAT LENH CHO tai Entry:                        |
+//|   MUA : Entry < Ask -> Buy Limit ; Entry > Ask -> Buy Stop       |
+//|   BAN : Entry > Bid -> Sell Limit; Entry < Bid -> Sell Stop      |
+//| (gia dang trong sai so InpMaxDevPoints cua Entry thi vao thi     |
+//| truong nhu thuong). Lenh cho cung SL/TP/comment cua chan do, tu  |
+//| huy sau N giay ke tu luc tin hieu phat ra. Moi chan duoc kiem    |
+//| tra truoc (vi the, lenh cho, lich su 1 gio) nen khong mo lap.    |
+//| Server giao LAI tin hieu con do (kiem tra ack); tin hieu do EA   |
+//| doi cu xu ly (khong co so thu tu luu) thi bo qua khi nang cap.   |
+//+------------------------------------------------------------------+
+bool MakeupOn() { return InpAllowTrading && InpMakeupEnable; }
+int MakeupSec() { return MathMax(30, MathMin(1800, InpMakeupExpirySec)); }
+string MakeupLabel() {
+    if (!InpMakeupEnable)
+        return "TAT";
+    return (InpAllowTrading ? "BAT" : "BAT (nhung DANH LENH dang TAT)") + " (Limit/Stop, het han " + IntegerToString(MakeupSec()) + "s)";
+}
+
+string LoginStr() { return (string)AccountInfoInteger(ACCOUNT_LOGIN); }
+string IdGv(ulong id) { return "OCEANID_" + LoginStr() + "_" + (string)id; }       // = yyyymmdd*10000 + so thu tu lenh cua tin hieu
+string FinGv(ulong id) { return "OCEANFIN_" + LoginStr() + "_" + (string)id; }     // tin hieu da xong han (khong con thieu)
+string PxGv(ulong ticket) { return "OCEANPX_" + LoginStr() + "_" + (string)ticket; } // gio server het han cua lenh cho
+bool IsFinal(ulong id) { return GlobalVariableCheck(FinGv(id)); }
+
+bool LookupSeq(ulong id, int& seq, int& day) {
+    if (!GlobalVariableCheck(IdGv(id)))
+        return false;
+    double v = GlobalVariableGet(IdGv(id));
+    day = (int)MathFloor(v / 10000.0);
+    seq = (int)MathRound(v - (double)day * 10000.0);
+    return seq > 0;
+}
+
+// Loi giao dich tam thoi (phai khop TRANSIENT_RC o src/shared/makeup.ts): 4 server ban, 6 mat ket noi, 8 qua nhieu yeu cau, 128 timeout,
+// 135 gia doi, 136 off quotes, 137 broker ban, 138 requote, 141 qua nhieu yeu cau, 146 trade context ban.
+bool IsTransientErr(int e) {
+    return e == 4 || e == 6 || e == 8 || e == 128 || e == 135 || e == 136 || e == 137 || e == 138 || e == 141 || e == 146;
+}
+bool TransientReasonText(string r) {
+    if (r == "no_connection" || r == "retry_timeout" || r == "no_quote")
+        return true;
+    if (StringFind(r, "failed:") == 0 || StringFind(r, "failed_") == 0)
+        return IsTransientErr((int)StringToInteger(StringSubstr(r, 7)));
+    return false;
+}
+// Ket qua ack co nghia "con thieu chan vi loi tam thoi" (Server se giao lai)? Phai khop isIncompleteResult o src/shared/makeup.ts.
+bool EaIncomplete(string res) {
+    if (StringFind(res, "retry:") == 0)
+        return true;
+    if (StringFind(res, "partial:") == 0) {
+        int u = StringFind(res, "_");
+        return u > 0 && TransientReasonText(StringSubstr(res, u + 1));
+    }
+    return TransientReasonText(res);
+}
+void MarkFinal(ulong id, string res) {
+    if (!EaIncomplete(res))
+        GlobalVariableSet(FinGv(id), (double)TimeCurrent());
+}
+
+bool IsPendingOp(int ty) { return ty == OP_BUYLIMIT || ty == OP_SELLLIMIT || ty == OP_BUYSTOP || ty == OP_SELLSTOP; }
+
+double TotalPendingLots() {
+    double t = 0;
+    for (int i = 0; i < OrdersTotal(); i++) {
+        if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+            continue;
+        if (OrderMagicNumber() != InpMagic || !IsPendingOp(OrderType()))
+            continue;
+        t += OrderLots();
+    }
+    return t;
+}
+// Lenh cho cung tinh vao han muc InpMaxTotalLots vi chung se thanh vi the khi khop.
+double TotalExposureLots() { return TotalOpenLots() + TotalPendingLots(); }
+
+// Trang thai chan TPn cua tin hieu (seq, day): 0 = chua co; 1 = da vao san (dang mo, hoac vua mo/dong trong 1 gio qua); 2 = dang co lenh CHO.
+int LegState(int seq, int day, int tpn) {
+    string want = StringFormat("%s#%d/TP%d", InpComment, seq, tpn);
+    for (int i = OrdersTotal() - 1; i >= 0; i--) {
+        if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+            continue;
+        if (OrderMagicNumber() != InpMagic)
+            continue;
+        if (StringFind(OrderComment(), want) != 0)
+            continue;
+        if (DayOf(OrderOpenTime()) != day)
+            continue;
+        int ty = OrderType();
+        return (ty == OP_BUY || ty == OP_SELL) ? 1 : 2;
+    }
+    datetime from = TimeCurrent() - 3600;
+    for (int i = OrdersHistoryTotal() - 1; i >= 0; i--) {
+        if (!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY))
+            continue;
+        if (OrderMagicNumber() != InpMagic)
+            continue;
+        int ty = OrderType();
+        if (ty != OP_BUY && ty != OP_SELL)
+            continue;
+        if (OrderOpenTime() < from)
+            continue;
+        if (StringFind(OrderComment(), want) != 0)
+            continue;
+        if (DayOf(OrderOpenTime()) != day)
+            continue;
+        return 1;
+    }
+    return 0;
+}
+
+// Co lenh cho (Limit/Stop) cua nhom (seq, day) voi so TP <= upTo khong? (BreakEven chua toi luc khi con chan thap hon dang cho khop.)
+bool HasPendingLeg(int seq, int day, int upTo) {
+    for (int i = OrdersTotal() - 1; i >= 0; i--) {
+        if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+            continue;
+        if (OrderMagicNumber() != InpMagic || !IsPendingOp(OrderType()))
+            continue;
+        int ps = 0, tpn = 0;
+        if (!ParseComment(OrderComment(), ps, tpn))
+            continue;
+        if (ps == seq && tpn <= upTo && DayOf(OrderOpenTime()) == day)
+            return true;
+    }
+    return false;
+}
+
+// Dat 1 lenh cho tai Entry. true = da dat (ghi gio het han vao Global Variable). err = ma loi khi that bai.
+bool PlacePending(string sym, bool buy, double lot, double entry, double sl, double tp, string cm, datetime expAt, double px, int& err) {
+    int dg = (int)MarketInfo(sym, MODE_DIGITS);
+    double en = NormalizeDouble(entry, dg);
+    int cmd;
+    if (buy)
+        cmd = (en < px) ? OP_BUYLIMIT : OP_BUYSTOP;
+    else
+        cmd = (en > px) ? OP_SELLLIMIT : OP_SELLSTOP;
+    for (int pass = 0; pass < 2; pass++) {
+        datetime ex = (pass == 0) ? expAt : 0; // lan 2: san khong cho dat han lenh (147) thi dat khong han, EA tu huy (CleanupPending)
+        ResetLastError();
+        int tk = OrderSend(sym, cmd, lot, en, 0, NormalizeDouble(sl, dg), NormalizeDouble(tp, dg), cm, InpMagic, ex, clrNONE);
+        if (tk > 0) {
+            GlobalVariableSet(PxGv((ulong)tk), (double)expAt);
+            return true;
+        }
+        err = GetLastError();
+        if (!(pass == 0 && err == 147))
+            break;
+    }
+    return false;
+}
+
+// Bu cac chan con thieu cua mot tin hieu da duoc danh dau (seq, day). Chan da co vi the/lenh cho thi bo qua (khong mo lap).
+// why0 = ly do ban dau (neu khong dat/bu duoc chan nao thi ack = ly do nay). Tra ve chuoi ack:
+//   opened:N | pending:P | opened:D+pending:P | partial:(D+P)/N_<ly do> | <ly do>
+string MakeupLegs(ulong id, int seq, int day, bool buy, string sym, double entry, double sl,
+                  double tp1, double tp2, double tp3, double lot, datetime recv, string why0) {
+    int n = InpTP3Only ? 1 : 3;
+    double tps[3];
+    tps[0] = tp1;
+    tps[1] = tp2;
+    tps[2] = tp3;
+    string why = why0;
+    int d = 0, p = 0;
+    bool stop = false;
+
+    double ask = MarketInfo(sym, MODE_ASK), bid = MarketInfo(sym, MODE_BID), pt = MarketInfo(sym, MODE_POINT);
+    int dg = (int)MarketInfo(sym, MODE_DIGITS);
+    double px = buy ? ask : bid;
+    double minDist = MarketInfo(sym, MODE_STOPLEVEL) * pt;
+    double tol = InpMaxDevPoints > 0 ? InpMaxDevPoints * pt : 0.0;
+    bool canTrade = true;
+    if (!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED)) {
+        why = "trading_off";
+        stop = true;
+    } else if (!TerminalInfoInteger(TERMINAL_CONNECTED)) {
+        why = "no_connection";
+        canTrade = false;
+    } else if (ask <= 0 || bid <= 0 || pt <= 0) {
+        why = "no_quote";
+        canTrade = false;
+    } else if ((int)(recv + MakeupSec() - TimeCurrent()) < 5) {
+        why = "makeup_expired";
+        stop = true;
+        Print("OceanRelay: bu lenh #", id, " het cua so ", MakeupSec(), "s");
+    } else if (buy ? (px <= sl) : (px >= sl)) {
+        why = "bad_levels"; // gia da cham/vuot SL cua tin hieu: tin hieu vo hieu
+        stop = true;
+        Print("OceanRelay: bu lenh #", id, " gia da toi SL -> khong dat");
+    }
+
+    for (int k = 0; k < n; k++) {
+        int tpn = InpTP3Only ? 3 : k + 1;
+        int st = LegState(seq, day, tpn);
+        if (st == 1) {
+            d++;
+            continue;
+        }
+        if (st == 2) {
+            p++;
+            continue;
+        }
+        if (stop || !canTrade)
+            continue; // chan thieu: giu ly do da ghi o tren
+        if (TotalExposureLots() + lot > InpMaxTotalLots + 1e-9) {
+            why = "max_lots";
+            stop = true;
+            Print("OceanRelay: bu lenh #", id, " vuot InpMaxTotalLots");
+            continue;
+        }
+        double tp = InpTP3Only ? tp3 : tps[k];
+        string cm = StringFormat("%s#%d/TP%d", InpComment, seq, tpn);
+        bool nearMkt = MathAbs(px - entry) <= MathMax(tol, minDist) + pt / 2; // dang sat Entry: vao thi truong nhu thuong
+        int err = 0;
+        bool sent = false;
+        if (nearMkt) {
+            if (!(buy ? (tp > px) : (tp < px))) {
+                why = "bad_levels";
+                continue;
+            }
+            if (MathAbs(tp - px) < minDist || MathAbs(px - sl) < minDist) {
+                why = "bad_stops";
+                continue;
+            }
+            ResetLastError();
+            int tk = OrderSend(sym, buy ? OP_BUY : OP_SELL, lot, NormalizeDouble(px, dg), InpSlippagePts,
+                               NormalizeDouble(sl, dg), NormalizeDouble(tp, dg), cm, InpMagic, 0, clrNONE);
+            if (tk > 0) {
+                d++;
+                continue;
+            }
+            err = GetLastError();
+        } else {
+            // Lenh cho: SL va TP cua chan phai cach Entry it nhat stops level.
+            if (MathAbs(entry - sl) < minDist || MathAbs(tp - entry) < minDist) {
+                why = "bad_stops";
+                continue;
+            }
+            sent = PlacePending(sym, buy, lot, entry, sl, tp, cm, recv + MakeupSec(), px, err);
+            if (sent) {
+                p++;
+                Print("OceanRelay: BU LENH #", id, " chan TP", tpn, " dat lenh cho tai ", DoubleToString(entry, dg), " (gia hien tai ", DoubleToString(px, dg),
+                      ", het han sau ", (int)(recv + MakeupSec() - TimeCurrent()), "s)");
+                continue;
+            }
+        }
+        why = "failed:" + (string)err;
+        Print("OceanRelay: bu lenh #", id, " chan TP", tpn, " that bai retcode=", err, " ", ErrorDescription(err), IsTransientErr(err) ? " -> se bu lai khi Server giao lai" : "");
+        if (IsTransientErr(err)) {
+            canTrade = false; // dung luot nay; Server giao lai sau 15 giay
+            continue;
+        }
+        if (err == 129 || err == 130)
+            continue; // chi chan nay sai gia/muc (129 invalid price, 130 invalid stops), chan khac van thu
+        stop = true; // loi khong the khac phuc (het tien, qua nhieu lenh cho...): ngung
+    }
+
+    if (d + p == n) {
+        if (p == 0)
+            return "opened:" + (string)d;
+        if (d == 0)
+            return "pending:" + (string)p;
+        return "opened:" + (string)d + "+pending:" + (string)p;
+    }
+    if (why == "")
+        why = "retry_timeout";
+    if (d + p == 0)
+        return why;
+    StringReplace(why, ":", "_");
+    StringReplace(why, ",", "_");
+    return "partial:" + (string)(d + p) + "/" + (string)n + "_" + why;
+}
+
+// Server giao lai tin hieu da duoc EA nay danh dau (con thieu chan): bu cac chan chua co vi the/lenh cho. Tra ve ket qua de ack.
+string MakeupRedeliver(ulong id, string side, string symbol, double entry, double sl, double tp1, double tp2, double tp3, int ageSec) {
+    int seq = 0, day = 0;
+    if (!LookupSeq(id, seq, day))
+        return "received"; // khong biet chan nao da vao (EA doi cu xu ly): khong dam bu, tranh mo lap
+    if (ageSec > MakeupSec())
+        return "received";
+    string sym = ResolveSymbol(symbol);
+    if (sym == "" || MarketInfo(sym, MODE_POINT) <= 0)
+        return "no_symbol";
+    bool buy = (side == "buy");
+    bool ok = buy ? (sl < entry && entry < tp1 && tp1 <= tp2 && tp2 <= tp3) : (sl > entry && entry > tp1 && tp1 >= tp2 && tp2 >= tp3);
+    if (!ok)
+        return "bad_levels";
+    double lot = NormVol(sym, InpTP3Only ? InpLotPerOrder * 3 : InpLotPerOrder);
+    Print("OceanRelay: Server giao lai #", id, " (lenh so ", seq, ", ", ageSec, "s) -> kiem tra va bu chan con thieu");
+    string res = MakeupLegs(id, seq, day, buy, sym, entry, sl, tp1, tp2, tp3, lot, TimeCurrent() - ageSec, "");
+    MarkFinal(id, res);
+    Print("OceanRelay: bu lenh #", id, " ket qua: ", res);
+    return res;
+}
+
+// Moi giay: huy lenh cho cua EA da qua han (lop du phong, phong khi san khong ho tro han lenh).
+void CleanupPending() {
+    for (int i = OrdersTotal() - 1; i >= 0; i--) {
+        if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+            continue;
+        if (OrderMagicNumber() != InpMagic || !IsPendingOp(OrderType()))
+            continue;
+        int tk = OrderTicket();
+        string nm = PxGv((ulong)tk);
+        if (!GlobalVariableCheck(nm))
+            continue;
+        if (TimeCurrent() < (datetime)GlobalVariableGet(nm))
+            continue;
+        ResetLastError();
+        if (OrderDelete(tk)) {
+            Print("OceanRelay: da huy lenh cho bu ", tk, " (het han)");
+            GlobalVariableDel(nm);
+        } else {
+            int err = GetLastError();
+            Print("OceanRelay: KHONG huy duoc lenh cho ", tk, " retcode=", err, " ", ErrorDescription(err));
+        }
+    }
+}
+
+// Lenh cho gui len Server: ticket,symbol,type,vol,price,sl,tp,conLaiGiay;...  (type: buylimit|buystop|selllimit|sellstop)
+string BuildOrders() {
+    string s = "";
+    int cnt = 0;
+    for (int i = 0; i < OrdersTotal() && cnt < 50; i++) {
+        if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+            continue;
+        if (OrderMagicNumber() != InpMagic)
+            continue;
+        int ty = OrderType();
+        string t = "";
+        if (ty == OP_BUYLIMIT)
+            t = "buylimit";
+        else if (ty == OP_BUYSTOP)
+            t = "buystop";
+        else if (ty == OP_SELLLIMIT)
+            t = "selllimit";
+        else if (ty == OP_SELLSTOP)
+            t = "sellstop";
+        else
+            continue;
+        string sym0 = OrderSymbol();
+        int dg = (int)MarketInfo(sym0, MODE_DIGITS);
+        string sym = sym0;
+        StringReplace(sym, ",", "_");
+        StringReplace(sym, ";", "_");
+        int tk = OrderTicket();
+        string left = "";
+        string nm = PxGv((ulong)tk);
+        if (GlobalVariableCheck(nm))
+            left = IntegerToString(MathMax(0, (int)((datetime)GlobalVariableGet(nm) - TimeCurrent())));
+        s += StringFormat("%d,%s,%s,%.2f,%s,%s,%s,%s;", tk, sym, t, OrderLots(),
+                          DoubleToString(OrderOpenPrice(), dg),
+                          DoubleToString(OrderStopLoss(), dg),
+                          DoubleToString(OrderTakeProfit(), dg), left);
+        cnt++;
+    }
+    return s;
+}
+
+// Setup (input) gui len Server de hien tren giao dien va de Server biet EA co bat bu lenh khong. Khong gui dia chi Gateway/Terminal ID.
+string CfgKv(string k, string v) {
+    StringReplace(v, ";", " ");
+    StringReplace(v, "=", " ");
+    StringReplace(v, "\n", " ");
+    StringReplace(v, "\r", " ");
+    return k + "=" + v + ";";
+}
+string B01(bool v) { return v ? "1" : "0"; }
+string BuildCfg() {
+    string s = "";
+    s += CfgKv("InpAllowTrading", B01(InpAllowTrading));
+    s += CfgKv("InpLotPerOrder", DoubleToString(InpLotPerOrder, 2));
+    s += CfgKv("InpMaxTotalLots", DoubleToString(InpMaxTotalLots, 2));
+    s += CfgKv("InpMaxAgeSec", IntegerToString(InpMaxAgeSec));
+    s += CfgKv("InpMaxDevPoints", IntegerToString(InpMaxDevPoints));
+    s += CfgKv("InpSlippagePts", IntegerToString(InpSlippagePts));
+    s += CfgKv("InpTP3Only", B01(InpTP3Only));
+    s += CfgKv("InpMagic", IntegerToString(InpMagic));
+    s += CfgKv("InpComment", InpComment);
+    s += CfgKv("InpMakeupEnable", B01(InpMakeupEnable));
+    s += CfgKv("InpMakeupExpirySec", IntegerToString(MakeupSec()));
+    s += CfgKv("InpBEEnable", B01(InpBEEnable));
+    s += CfgKv("InpBETrigger", IntegerToString((int)InpBETrigger));
+    s += CfgKv("InpBEOffset", DoubleToString(InpBEOffset, 2));
+    s += CfgKv("InpBEUnit", IntegerToString((int)InpBEUnit));
+    s += CfgKv("InpBELockProfit", B01(InpBELockProfit));
+    return s;
+}
+
+//+------------------------------------------------------------------+
 //| Mo 3 lenh (hoac 1 lenh neu InpTP3Only) cung SL, TP1/TP2/TP3.     |
 //| Tra ve chuoi ket qua de ack. Moi buoc chan deu tra ve ma ro rang.|
 //+------------------------------------------------------------------+
@@ -340,7 +751,9 @@ string OnEntrySignal(ulong id, string side, string symbol, string tf, double ent
         Print("OceanRelay: Algo Trading tat");
         return "trading_off";
     }
-    if (ageSec > InpMaxAgeSec) {
+    // Tin hieu qua han thuong: neu bat bu lenh va con trong cua so N giay thi KHONG bo, chuyen sang dat bu lenh cho (Limit/Stop).
+    bool stale = (ageSec > InpMaxAgeSec);
+    if (stale && !(MakeupOn() && ageSec <= MakeupSec())) {
         Print("OceanRelay: bo #", id, " qua cu (", ageSec, "s)");
         return "too_old";
     }
@@ -359,9 +772,35 @@ string OnEntrySignal(ulong id, string side, string symbol, string tf, double ent
         return "no_symbol";
     double px = buy ? ask : bid;
 
-    if (InpMaxDevPoints > 0 && MathAbs(px - entry) > InpMaxDevPoints * pt) {
-        Print("OceanRelay: bo #", id, " gia lech Entry ", DoubleToString(MathAbs(px - entry) / pt, 0), " point");
-        return "price_dev";
+    // Thu tu muc theo Entry: mua SL < Entry < TP1 <= TP2 <= TP3, ban nguoc lai.
+    bool ordOk = buy ? (sl < entry && entry < tp1 && tp1 <= tp2 && tp2 <= tp3) : (sl > entry && entry > tp1 && tp1 >= tp2 && tp2 >= tp3);
+    if (!ordOk) {
+        Print("OceanRelay: bo #", id, " SL/TP sai phia so voi Entry");
+        return "bad_levels";
+    }
+    int n = InpTP3Only ? 1 : 3;
+    double lotEach = NormVol(symbol, InpTP3Only ? InpLotPerOrder * 3 : InpLotPerOrder);
+    if (TotalExposureLots() + lotEach * n > InpMaxTotalLots + 1e-9) {
+        Print("OceanRelay: bo #", id, " vuot InpMaxTotalLots");
+        return "max_lots";
+    }
+
+    bool dev = (InpMaxDevPoints > 0 && MathAbs(px - entry) > InpMaxDevPoints * pt);
+    if (stale || dev) {
+        if (!MakeupOn()) {
+            Print("OceanRelay: bo #", id, " gia lech Entry ", DoubleToString(MathAbs(px - entry) / pt, 0), " point");
+            return "price_dev";
+        }
+        // Tin hieu tre hoac gia da di xa Entry: khong duoi theo gia, dat lenh cho (Limit/Stop) tai Entry cho ca cac chan.
+        MarkDone(id);
+        int bday = 0;
+        int bseq = NextSeq(bday);
+        GlobalVariableSet(IdGv(id), (double)bday * 10000.0 + (double)bseq);
+        Print("OceanRelay: tin hieu #", id, " -> lenh so ", bseq, " cua ngay ", bday, stale ? " (qua han thuong -> bu lenh)" : " (gia lech Entry -> bu lenh)");
+        string rb = MakeupLegs(id, bseq, bday, buy, symbol, entry, sl, tp1, tp2, tp3, lotEach, TimeCurrent() - ageSec, stale ? "retry_timeout" : "price_dev");
+        MarkFinal(id, rb);
+        Print("OceanRelay: #", id, " (lenh so ", bseq, ") bu lenh: ", rb);
+        return rb;
     }
     // SL/TP phai dung phia so voi GIA HIEN TAI (Server da kiem phia theo Entry, day la kiem lan 2 theo gia that)
     bool ok = buy ? (sl < px && tp1 > px && tp1 <= tp2 && tp2 <= tp3) : (sl > px && tp1 < px && tp1 >= tp2 && tp2 >= tp3);
@@ -375,17 +814,11 @@ string OnEntrySignal(ulong id, string side, string symbol, string tf, double ent
         return "bad_stops";
     }
 
-    int n = InpTP3Only ? 1 : 3;
-    double lotEach = NormVol(symbol, InpTP3Only ? InpLotPerOrder * 3 : InpLotPerOrder);
-    if (TotalOpenLots() + lotEach * n > InpMaxTotalLots + 1e-9) {
-        Print("OceanRelay: bo #", id, " vuot InpMaxTotalLots");
-        return "max_lots";
-    }
-
     // Ghi nho id TRUOC khi goi san: loi giua chung thi khong bao gio mo lap.
     MarkDone(id);
     int seqDay = 0;
     int seq = NextSeq(seqDay);
+    GlobalVariableSet(IdGv(id), (double)seqDay * 10000.0 + (double)seq);
     Print("OceanRelay: tin hieu #", id, " -> lenh so ", seq, " cua ngay ", seqDay);
     double tps[3];
     tps[0] = tp1;
@@ -408,9 +841,18 @@ string OnEntrySignal(ulong id, string side, string symbol, string tf, double ent
         }
     }
     Print("OceanRelay: #", id, " (lenh so ", seq, ") da mo ", opened, "/", n, " lenh");
-    if (opened == 0)
-        return "failed:" + (string)lastRc;
-    return "opened:" + (string)opened;
+    string res;
+    if (opened == n)
+        res = "opened:" + (string)opened;
+    else if (MakeupOn() && IsTransientErr(lastRc)) {
+        // Loi tam thoi (mat ket noi, requote, timeout...): dat lenh cho tai Entry cho cac chan con thieu.
+        res = MakeupLegs(id, seq, seqDay, buy, symbol, entry, sl, tp1, tp2, tp3, lotEach, TimeCurrent() - ageSec, "failed:" + (string)lastRc);
+    } else if (opened == 0)
+        res = "failed:" + (string)lastRc;
+    else
+        res = "partial:" + (string)opened + "/" + (string)n + "_failed_" + (string)lastRc;
+    MarkFinal(id, res);
+    return res;
 }
 
 // Khuon cap nhat (closeStatus): chua biet gia tri cu the nen CHI GHI NHAN, khong tu dong dong/doi SL.
@@ -646,6 +1088,8 @@ void ManageBreakEven() {
         if (trigOpen || !laterOpen)
             continue; // chua toi luc, hoac khong con lenh nao de doi
         ulong key = g_bgKeys[g];
+        if (HasPendingLeg(g_bgSeqs[g], g_bgDays[g], trig))
+            continue; // chan TP<=trig con dang cho khop (lenh bu): chua toi luc doi SL
         if (GlobalVariableCheck(BeGv(key)))
             continue; // da xu ly (xong hoac bo qua)
 
@@ -671,5 +1115,6 @@ void UpdateComment(bool ok) {
     Comment("OceanRelay ", EA_VER, InpAllowTrading ? "  [DANH LENH: BAT]" : "  [CHI THEO DOI]", "\n",
             ok ? "Gateway: OK" : "Gateway: LOI (xem tab Experts)", "\n",
             "BreakEven: ", BeLabel(), "\n",
+            "Bu lenh: ", MakeupLabel(), "\n",
             "Tin hieu cuoi: ", g_last);
 }

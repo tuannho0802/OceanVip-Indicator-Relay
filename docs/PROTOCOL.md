@@ -30,12 +30,17 @@ OCEAN VIP by Duong | BUY ENTRY | XAUUSD | M3 | Entry: 4094.540 | SL: 4088.700 | 
 | `GET /api/state`, `/api/info`, `/api/health`, tệp tĩnh | công khai | Giao diện. `/api/info` chỉ kèm `retention` (số tín hiệu đang lưu, số ngày giữ, lần dọn gần nhất) cho người xem từ chính VPS |
 
 ## EA ⇄ Gateway (`POST /v1/ping`, text `khóa=giá trị`)
-Gửi: `login, server, [tid], bal, eq, mg, fm, ver, pos=ticket,symbol,side,vol,open,sl,tp,profit;…, acks=id:kết quả,…`
+Gửi: `login, server, [tid], bal, eq, mg, fm, ver, pos=ticket,symbol,side,vol,open,sl,tp,profit;…, ord=ticket,symbol,type,vol,price,sl,tp,conLaiGiay;…, [cfg=khóa=giá trị;khóa=giá trị;…], acks=id:kết quả,…`. `ord` = lệnh chờ của EA (type: `buylimit|buystop|selllimit|sellstop`; có mặt nhưng rỗng = không có lệnh chờ; vắng = EA đời cũ, Server giữ bản cũ). `cfg` = các input của EA, EA mới gửi mỗi 10 nhịp (vắng = giữ bản đã lưu); Server dùng `InpAllowTrading`, `InpMakeupEnable`, `InpMakeupExpirySec` để quyết định giao bù, các khóa khác chỉ để hiển thị.
 Nhận: dòng đầu `OK`, tiếp theo:
 - `S|id|side|symbol|tf|entry|sl|tp1|tp2|tp3|ageSec`
 - `U|id|side|status|symbol|tf|entry|sl|tp|ageSec`
 
 Kết quả ack của EA: `received`, `opened:N`, `trading_off`, `too_old`, `price_dev`, `bad_levels`, `bad_stops`, `no_symbol`, `max_lots`, `failed:<retcode>`. EA 0.3.0 thêm: `retry:D/N` (đang thử lại: D chân đã mở / N chân cần mở), `partial:D/N_<lý do>` (kết thúc thiếu chân; lý do là một mã ở trên hoặc `fill_dev`, `retry_timeout`, `no_connection`, `no_quote`), và các mã kết thúc khi không mở được chân nào (`no_connection`, `retry_timeout`, `fill_dev`...). Ack cùng id gửi lại thì **ghi đè** kết quả cũ ở Server (`retry:1/3` → `opened:3`). Gateway tách ack ở dấu `:` đầu tiên nên phần sau (`opened:3`, `failed:10031`) giữ nguyên. Gateway tự sinh `skipped_tf`, `bad_sig`.
+
+EA MT5 0.4.0 / MT4 0.3.0 (bù lệnh) thêm: `pending:P`, `opened:D+pending:P`; `partial:(D+P)/N_<lý do>` đếm cả chân đã đặt chờ; lý do thêm `makeup_expired`. Ack `received` **không ghi đè** kết quả cụ thể đã có, chỉ làm mới giờ ack.
+
+### Giao lại để bù lệnh (Server → Gateway → EA)
+Terminal khai bật bù lệnh (`InpAllowTrading=1` và `InpMakeupEnable=1`, cửa sổ N = `InpMakeupExpirySec`, tối đa 1800) thì ngoài tín hiệu mới, `/api/gw/ping` còn giao lại tín hiệu **vào lệnh** (`S|`, không bao giờ `U|`) mới hơn con trỏ của terminal và tuổi ≤ N: (1) chưa có bản ghi giao nhận và đã quá `maxAgeSec` (terminal không phản hồi lúc tín hiệu đến); (2) ack còn dở vì lỗi tạm thời (`retry:D/N`, `partial:…_<lỗi tạm thời>`, `failed:<mã tạm thời>`, `no_connection`, `retry_timeout`, `no_quote`), ack cuối cách ≥ 15 giây. Tuổi trong dòng `S|` là tuổi thật nên EA tự quyết bù. Tối đa 10 tín hiệu mỗi ping (tín hiệu mới ưu tiên). Danh sách mã tạm thời: `src/shared/makeup.ts`.
 
 ## Chữ ký tín hiệu
 `sig = hex(HMAC-SHA256(EA_KEY, [tid,id,kind,side,symbol,tf,entry,sl,tp1,tp2,tp3,tp,status].join('|')))`, số null = chuỗi rỗng. Cài đặt: `src/shared/hmac.ts` (`signalCanon`, `signSignal`).
