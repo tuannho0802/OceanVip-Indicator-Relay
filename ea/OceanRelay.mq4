@@ -961,6 +961,8 @@ int ClosedByTp() {
 // nen lenh cung so thu tu cua ngay khac khong bi nham.
 int TpClosedByTp(int seq, int n, datetime tRef) {
     string want = InpComment + "#" + IntegerToString(seq) + "/TP" + IntegerToString(n);
+    // Chan bu (lenh cho khop sau) co the mo muon hon cac chan khac toi InpMakeupExpirySec giay: noi rong cua so.
+    long tol = 300 + (MakeupOn() ? (long)MakeupSec() : 0);
     int total = OrdersHistoryTotal();
     for (int i = total - 1; i >= 0; i--) {
         if (!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY))
@@ -972,7 +974,7 @@ int TpClosedByTp(int seq, int n, datetime tRef) {
             continue;
         if (StringFind(OrderComment(), want) != 0)
             continue;
-        if (MathAbs((long)OrderOpenTime() - (long)tRef) > 300)
+        if (MathAbs((long)OrderOpenTime() - (long)tRef) > tol)
             continue;
         return ClosedByTp();
     }

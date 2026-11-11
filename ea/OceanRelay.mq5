@@ -1088,7 +1088,9 @@ bool ParseComment(string cm, int &seq, int &tpn)
 // nen lenh cung so thu tu cua ngay khac khong bi nham.
 int TpClosedByTp(int seq, int n, datetime tRef)
   {
-   if(!HistorySelect(tRef - 600, TimeCurrent() + 60)) return -1;
+   // Chan bu (lenh cho khop sau) co the mo muon hon cac chan khac toi InpMakeupExpirySec giay: noi rong cua so.
+   long tol = 300 + (MakeupOn() ? (long)MakeupSec() : 0);
+   if(!HistorySelect(tRef - (datetime)(tol + 300), TimeCurrent() + 60)) return -1;
    string want = InpComment + "#" + IntegerToString(seq) + "/TP" + IntegerToString(n);
    int total = HistoryDealsTotal();
    for(int i = total - 1; i >= 0; i--)
@@ -1099,7 +1101,7 @@ int TpClosedByTp(int seq, int n, datetime tRef)
       if(HistoryDealGetInteger(d, DEAL_ENTRY) != DEAL_ENTRY_IN) continue;
       if(HistoryDealGetString(d, DEAL_COMMENT) != want) continue;
       datetime dt = (datetime)HistoryDealGetInteger(d, DEAL_TIME);
-      if(MathAbs((long)dt - (long)tRef) > 300) continue;
+      if(MathAbs((long)dt - (long)tRef) > tol) continue;
       long pid = HistoryDealGetInteger(d, DEAL_POSITION_ID);
       for(int j = total - 1; j >= 0; j--)
         {
