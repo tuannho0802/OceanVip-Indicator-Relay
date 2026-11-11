@@ -11,6 +11,8 @@ Người dùng cuối không phải sửa tệp env: trang **Cài đặt** (http
 | `accounts` | `OCEAN_ACCOUNTS` | `[]` = mọi tài khoản |
 | `symbolMap` | `OCEAN_SYMBOL_MAP` của Gateway | Server gửi xuống Gateway qua mỗi ping nên Gateway áp dụng ngay; thiếu = dùng `gateway.env` |
 | `tfs` | `OCEAN_TFS` của Gateway | `[]` = mọi khung giờ; thiếu = dùng `gateway.env` |
+| `gatewayPort` | `OCEAN_GW_PORT` | Cổng Gateway cho EA |
+| `retentionDays` | `OCEAN_RETENTION_DAYS` | Số ngày giữ tín hiệu đã xong (0 = không tự xóa) |
 
 API (`GET/POST /api/setup`) **chỉ nhận yêu cầu từ chính VPS**: kết nối loopback, không qua Cloudflare Tunnel (`cf-connecting-ip`/`x-forwarded-for`), `Host` là `127.0.0.1`/`localhost`, `Origin` (nếu có) là chính trang đó, và POST phải kèm header `x-ocean-setup: 1` + JSON. Dữ liệu sai bị từ chối trước khi ghi tệp, nên cài đặt hỏng không làm Server hỏng; `settings.json` không áp dụng được lúc khởi động thì bị bỏ qua (Server chạy theo `server.env`).
 
@@ -30,6 +32,8 @@ API (`GET/POST /api/setup`) **chỉ nhận yêu cầu từ chính VPS**: kết n
 | `OCEAN_MAX_AGE_SEC` | 120 | Quá tuổi này không giao cho EA |
 | `OCEAN_DEDUPE_SEC` | 300 | Cửa sổ chống trùng |
 | `OCEAN_DATA` / `OCEAN_DB` / `OCEAN_LOG_DIR` | `C:\ProgramData\OceanRelay` | Dữ liệu, DB, log |
+| `OCEAN_RETENTION_DAYS` | 7 | Tự xóa tín hiệu đã xong cũ hơn số ngày này (0 = không tự xóa; 0-3650). Trang Cài đặt › Nâng cao › "Tự xóa tín hiệu đã xong sau (ngày)" (`retentionDays` trong `settings.json`) thắng biến này, có hiệu lực ngay |
+| `OCEAN_RETENTION_HOUR` | 3 | Giờ (0-23, giờ địa phương VPS) cron dọn mỗi ngày; VPS tắt đúng giờ đó thì dọn bù khi chạy lại |
 | `OCEAN_LOG_LEVEL` | info | debug/info/warn/error |
 | `OCEAN_UI_DIR` | tự tìm `web/` hoặc `ui/` | Thư mục giao diện |
 
@@ -47,7 +51,7 @@ API (`GET/POST /api/setup`) **chỉ nhận yêu cầu từ chính VPS**: kết n
 Secret: `WEBHOOK_KEY`, `SYNC_KEY`. Biến: `VPS_ORIGIN` (chỉ khi tunnel có tên). Binding: `DB` (D1 `ocean-relay`).
 
 ## Input của EA
-`InpGateway`, `InpPingSec`, `InpTimeoutMs`, `InpTerminalId`; đặt lệnh: `InpAllowTrading` (false), `InpLotPerOrder` (0.01), `InpMaxTotalLots` (0.30), `InpMaxAgeSec` (60), `InpMaxDevPoints` (500), `InpSlippagePts` (30), `InpTP3Only`, `InpMagic`, `InpComment`.
+`InpGateway`, `InpPingSec`, `InpTimeoutMs`, `InpTerminalId`; đặt lệnh: `InpAllowTrading` (false), `InpLotPerOrder` (0.01), `InpMaxTotalLots` (0.30), `InpMaxAgeSec` (60), `InpMaxDevPips` (10; sai số cho phép so với Entry của Signal, đơn vị pip, 0 = không kiểm), `InpPipPoints` (0 = tự động: 10 point/pip; vàng 3 số lẻ giá ≥ 1000 thì 100 point), `InpSlippagePts` (30), `InpCloseBadFill` (false), `InpRetrySec` (1), `InpRetryMaxSec` (120), `InpTP3Only`, `InpMagic`, `InpComment`. EA 0.3.0 bỏ `InpMaxDevPoints` (thay bằng `InpMaxDevPips`; 1 pip = 10 point, vàng 2 số lẻ: 10 pip = 1.0 giá).
 
 BreakEven (mặc định tắt): `InpBEEnable` (false), `InpBETrigger` (`BE_AFTER_TP1` / `BE_AFTER_TP2`), `InpBEOffset` (3.0), `InpBEUnit` (`BE_UNIT_PRICE` / `BE_UNIT_PIPS`), `InpBELockProfit` (false). Xem `docs/ea/README.md`.
 

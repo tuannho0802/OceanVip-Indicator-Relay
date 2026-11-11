@@ -4,6 +4,7 @@ loadEnvIfPresent('server.env')
 import { createApp } from './app'
 import { APP_VERSION, ConfigError, defaultDataDir, ensureDataDir, loadConfig, type ServerConfig } from './config'
 import { createLogger } from './log'
+import { RetentionJob } from './retention'
 import { Runtime } from './runtime'
 import { SetupController } from './setup'
 import { readSettings, settingsPath } from './settings'
@@ -48,6 +49,7 @@ if (process.argv[2] === 'info') {
   console.log(`  Webhook trực tiếp : ${cfg.webhookKey ? `${cfg.publicUrl || '<địa chỉ công khai>'}/webhook?key=${show ? cfg.webhookKey : mask(cfg.webhookKey)}` : 'tắt (không có OCEAN_WEBHOOK_KEY)'}`)
   console.log(`  Worker            : ${cfg.workerUrl || '(không dùng)'}   Server ID ${cfg.serverId || '-'}   khóa ${k(cfg.syncKey)}   kéo bù mỗi ${cfg.pollSec}s`)
   console.log(`  Tài khoản MT5     : ${cfg.accounts.length ? cfg.accounts.join(', ') : '(mọi tài khoản dùng đúng EA key)'}`)
+  console.log(`  Dọn tín hiệu cũ   : ${cfg.retentionDays > 0 ? `mỗi ngày lúc ${String(cfg.retentionHour).padStart(2, '0')}:00, xóa tín hiệu cũ hơn ${cfg.retentionDays} ngày` : 'tắt (không tự xóa)'}`)
   console.log(`  Quick Tunnel      : ${cfg.quickTunnel ? 'bật' : 'tắt'}   Dữ liệu: ${cfg.dataDir}`)
   console.log(`  Cài đặt giao diện : ${cfg.settingsFile}   (đổi trên trang Cài đặt: http://127.0.0.1:${cfg.port}/#setup)`)
   if (!show) console.log('  (thêm --show-keys để hiện đủ khóa)')
@@ -83,9 +85,12 @@ app.server.listen(cfg.port, cfg.host, () => {
   void runtime?.apply().catch((e) => log.error(`khởi động Worker/tunnel lỗi: ${String(e).slice(0, 200)}`))
 })
 
-setInterval(() => app.store.prune(Math.floor(Date.now() / 1000) - 30 * 86400), 6 * 3600 * 1000).unref()
+// Cron dọn tín hiệu đã xong (mỗi ngày một lần, mặc định 03:00, giữ 7 ngày); cfg là đối tượng sống nên đổi ở trang Cài đặt có hiệu lực ngay.
+const retention = new RetentionJob(app.store, cfg, undefined, log)
+retention.start()
 
 const shutdown = () => {
+  retention.stop()
   runtime?.stop()
   app.close()
   process.exit(0)

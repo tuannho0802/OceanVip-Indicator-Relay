@@ -36,6 +36,9 @@ th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);white-
 .btn.sm{padding:4px 10px;font-size:12px;border-radius:99px}
 .banner{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:12px 18px 0;padding:10px 14px;border:1px solid var(--warn);border-radius:12px;color:var(--warn);max-width:1264px}
 @media(min-width:1300px){.banner{margin-left:auto;margin-right:auto}}
+.logtools .hint{margin:0}.logtools .row{gap:8px}.inl{font-size:12px;color:var(--muted)}
+.num{width:64px;padding:4px 8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}
+.msg.sm{min-height:0;margin:6px 0 0;font-size:12px}.msg.sm:empty{display:none}
 .setup{max-width:720px;margin:0 auto;grid-column:1/-1}
 main#setupView{display:block}
 .setup-top{display:flex;align-items:center;justify-content:space-between;gap:12px}

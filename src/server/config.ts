@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { SERVER_ID_RE, decodeConnectCode } from '../shared/connect'
 import { DEFAULT_GW_PORT, MAX_PORT, MIN_GW_PORT } from '../shared/defaults'
 import type { LogLevel } from './log'
+import { DEFAULT_RETENTION_DAYS, DEFAULT_RETENTION_HOUR, MAX_RETENTION_DAYS } from './retention'
 import { type Settings, overlayEnv, settingsPath } from './settings'
 
 export const APP_VERSION = process.env.OCEAN_VERSION ?? '0.1.1'
@@ -50,6 +51,10 @@ export type ServerConfig = {
   gatewayPort: number
   /** Cổng Gateway đã được đặt rõ (trang Cài đặt hoặc OCEAN_GW_PORT). Chưa đặt thì Server KHÔNG ép cổng lên Gateway (Gateway ở máy khác giữ cổng riêng). */
   gatewayPortSet: boolean
+  /** Tự xóa tín hiệu đã xong cũ hơn số ngày này (Cron của Server). 0 = không tự xóa. Trang Cài đặt thắng OCEAN_RETENTION_DAYS. */
+  retentionDays: number
+  /** Giờ (0-23, giờ địa phương của VPS) cron dọn mỗi ngày. */
+  retentionHour: number
 }
 
 export class ConfigError extends Error { }
@@ -148,6 +153,8 @@ export function loadConfig(baseEnv: NodeJS.ProcessEnv = process.env, settings: S
     tfs: settings.tfs ?? null,
     gatewayPort,
     gatewayPortSet: (env.OCEAN_GW_PORT ?? '').trim() !== '',
+    retentionDays: int(env, 'OCEAN_RETENTION_DAYS', DEFAULT_RETENTION_DAYS, 0, MAX_RETENTION_DAYS),
+    retentionHour: int(env, 'OCEAN_RETENTION_HOUR', DEFAULT_RETENTION_HOUR, 0, 23),
   }
 }
 

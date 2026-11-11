@@ -15,7 +15,8 @@
 | Trang Cài đặt báo đỏ "Gateway chưa mở được cổng …"; Gateway log `Cổng … đang bị chương trình khác dùng` | Cổng Gateway trùng chương trình khác trên VPS (ví dụ Gateway AZ Sentinel) | Trang Cài đặt › Nâng cao › Cổng Gateway: chọn cổng khác. Gateway không thoát mà giữ cổng cũ và tự chuyển khi lưu |
 | Trang Cài đặt báo "Chưa thấy Gateway báo về" | Tác vụ `Ocean Relay Gateway` chưa chạy, hoặc Gateway là bản cũ (chưa biết đổi cổng) | Chạy lại bộ cài mới nhất; xem `gateway.log` |
 | Tín hiệu hiện nhưng không có lệnh, ack `trading_off` | `InpAllowTrading=false` hoặc Algo Trading tắt | Bật có chủ đích |
-| Ack `price_dev` / `too_old` | Giá đã chạy / tín hiệu cũ | Chỉnh `InpMaxDevPoints`, `InpMaxAgeSec` (cân nhắc rủi ro) |
+| Ack `price_dev` / `too_old` | Giá đã chạy quá `InpMaxDevPips` so với Entry / tín hiệu cũ | Chỉnh `InpMaxDevPips`, `InpMaxAgeSec` (cân nhắc rủi ro: nới sai số là chấp nhận khớp xa giá Signal hơn) |
+| Experts: `lenh TPn that bai retcode=6 no connection with trade server` | Terminal mất kết nối máy chủ giao dịch đúng lúc vào lệnh | EA 0.3.0 tự thử lại mỗi `InpRetrySec` giây (tối đa `InpRetryMaxSec` giây) cho đủ 3 lệnh nếu giá còn trong `InpMaxDevPips`. Ack `retry:D/N` = đang thử lại; kết thúc `opened:N` / `partial:D/N_<lý do>`. Kiểm tra mạng/VPS nếu lặp lại |
 | Ack `no_symbol` | Tên symbol sàn khác TradingView | Đặt `OCEAN_SYMBOL_MAP` ở Gateway |
 | Server "cổng đang bị chiếm" | Chương trình khác dùng cổng Server | Đổi `OCEAN_PORT` (cổng Gateway: xem hai dòng trên) |
 | Tín hiệu tới trễ hoặc hiện “Quá hạn, không giao cho EA” | Worker → VPS đẩy hụt (tunnel chập chờn, lệch giờ VPS > 300 giây, sai khóa) nên tín hiệu phải chờ Cron quét lại (≤ 1 phút) hoặc kéo bù (`OCEAN_POLL_SEC`) | Trang Worker → thẻ VPS: bấm **Đo độ trễ** (hiện min/TB/max, giờ lệch, xác thực khóa) và xem dòng **Lần đẩy gần nhất** (`bad_time` = lệch giờ, `timeout`/`network` = tunnel). Sửa giờ Windows (`w32tm /resync`) hoặc dùng Named Tunnel + `OCEAN_PUBLIC_URL` |

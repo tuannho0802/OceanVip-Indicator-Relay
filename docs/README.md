@@ -15,6 +15,7 @@ Không có đăng nhập; giao diện công khai, chỉ đọc. Bảo mật nằ
 | [OPERATIONS.md](OPERATIONS.md) | Vận hành, log, sự cố thường gặp |
 | [ALERT-FORMAT.md](ALERT-FORMAT.md) | Định dạng alert text một dòng của indicator (mẫu thật) |
 | [CICD.md](CICD.md) | GitHub Actions: `[deploy]` cho Worker, `[release-server]` cho bộ cài |
+| [CHANGELOG.md](CHANGELOG.md) | Thay đổi theo từng bản (Server / EA) |
 | [VPS-TEST.md](VPS-TEST.md) | Kiểm thử thủ công bộ cài, Quick Tunnel, giao diện trên VPS |
 
 ## Tài liệu theo thư mục

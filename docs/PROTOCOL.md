@@ -26,7 +26,8 @@ OCEAN VIP by Duong | BUY ENTRY | XAUUSD | M3 | Entry: 4094.540 | SL: 4088.700 | 
 | `POST /api/ping` | như `/api/ingest` | Worker đo độ trễ (nút “Đo độ trễ”): không tạo tín hiệu, trả `{ok,now,skew}` để biết VPS lệch giờ |
 | `POST /api/gw/ping` | Bearer EA_KEY | Gateway ping, nhận `{now, signals:[…+sig]}` |
 | `POST /api/gw/config` | Bearer EA_KEY | Gateway gửi `{port, error}` (cổng đang nghe thật, lý do nếu chưa mở được cổng); nhận `{now, config:{tfs, symbolMap, gatewayPort}}`. `gatewayPort` null = chưa đặt rõ, Gateway dùng cổng trong `gateway.env`. Gateway gọi mỗi 5 giây |
-| `GET /api/state`, `/api/info`, `/api/health`, tệp tĩnh | công khai | Giao diện |
+| `POST /api/signals/purge` | chỉ từ chính VPS (như `/api/setup`) + `x-ocean-setup: 1` + JSON | `{mode:"older",days:1..3650}` xóa tín hiệu đã xong cũ hơn N ngày, `{mode:"all"}` xóa mọi tín hiệu đã xong; luôn giữ tín hiệu còn hạn giao cho EA (`maxAgeSec` + 60 giây). Trả `{ok,deleted,kept_fresh,count}` |
+| `GET /api/state`, `/api/info`, `/api/health`, tệp tĩnh | công khai | Giao diện. `/api/info` chỉ kèm `retention` (số tín hiệu đang lưu, số ngày giữ, lần dọn gần nhất) cho người xem từ chính VPS |
 
 ## EA ⇄ Gateway (`POST /v1/ping`, text `khóa=giá trị`)
 Gửi: `login, server, [tid], bal, eq, mg, fm, ver, pos=ticket,symbol,side,vol,open,sl,tp,profit;…, acks=id:kết quả,…`
@@ -34,7 +35,7 @@ Nhận: dòng đầu `OK`, tiếp theo:
 - `S|id|side|symbol|tf|entry|sl|tp1|tp2|tp3|ageSec`
 - `U|id|side|status|symbol|tf|entry|sl|tp|ageSec`
 
-Kết quả ack của EA: `received`, `opened:N`, `trading_off`, `too_old`, `price_dev`, `bad_levels`, `bad_stops`, `no_symbol`, `max_lots`, `failed:<retcode>`. Gateway tự sinh `skipped_tf`, `bad_sig`.
+Kết quả ack của EA: `received`, `opened:N`, `trading_off`, `too_old`, `price_dev`, `bad_levels`, `bad_stops`, `no_symbol`, `max_lots`, `failed:<retcode>`. EA 0.3.0 thêm: `retry:D/N` (đang thử lại: D chân đã mở / N chân cần mở), `partial:D/N_<lý do>` (kết thúc thiếu chân; lý do là một mã ở trên hoặc `fill_dev`, `retry_timeout`, `no_connection`, `no_quote`), và các mã kết thúc khi không mở được chân nào (`no_connection`, `retry_timeout`, `fill_dev`...). Ack cùng id gửi lại thì **ghi đè** kết quả cũ ở Server (`retry:1/3` → `opened:3`). Gateway tách ack ở dấu `:` đầu tiên nên phần sau (`opened:3`, `failed:10031`) giữ nguyên. Gateway tự sinh `skipped_tf`, `bad_sig`.
 
 ## Chữ ký tín hiệu
 `sig = hex(HMAC-SHA256(EA_KEY, [tid,id,kind,side,symbol,tf,entry,sl,tp1,tp2,tp3,tp,status].join('|')))`, số null = chuỗi rỗng. Cài đặt: `src/shared/hmac.ts` (`signalCanon`, `signSignal`).

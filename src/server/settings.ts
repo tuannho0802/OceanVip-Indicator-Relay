@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { decodeConnectCode } from '../shared/connect'
 import { DEFAULT_GW_PORT, MAX_PORT, MIN_GW_PORT, isGwPort } from '../shared/defaults'
+import { DEFAULT_RETENTION_DAYS, MAX_RETENTION_DAYS } from './retention'
 
 /**
  * Cài đặt do người dùng chỉnh trên giao diện web (trang Cài đặt), lưu ở <thư mục dữ liệu>/settings.json.
@@ -19,9 +20,11 @@ export type Settings = {
   tfs?: string[]
   /** Cổng cục bộ của Gateway (EA nối tới). Gateway tự đổi theo trong vài giây; EA/MT5 thì người dùng sửa theo (trang Cài đặt hướng dẫn). */
   gatewayPort?: number
+  /** Tự xóa tín hiệu đã xong cũ hơn số ngày này; 0 = không tự xóa. */
+  retentionDays?: number
 }
 
-export const SETTING_KEYS = ['connectCode', 'accounts', 'symbolMap', 'tfs', 'gatewayPort'] as const
+export const SETTING_KEYS = ['connectCode', 'accounts', 'symbolMap', 'tfs', 'gatewayPort', 'retentionDays'] as const
 
 export const settingsPath = (dataDir: string): string => path.join(dataDir, 'settings.json')
 
@@ -140,6 +143,17 @@ export function normalizeSettings(input: unknown): Normalized {
       value.gatewayPort = n
     }
   }
+  if ('retentionDays' in input) {
+    const v = input.retentionDays
+    if (v === null || (typeof v === 'string' && v.trim() === '')) remove.push('retentionDays')
+    else {
+      const n = typeof v === 'string' ? (/^\d{1,4}$/.test(v.trim()) ? Number(v.trim()) : NaN) : v
+      if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > MAX_RETENTION_DAYS) {
+        return { ok: false, error: `Số ngày giữ tín hiệu phải là số nguyên từ 0 đến ${MAX_RETENTION_DAYS} (0 = không tự xóa, mặc định ${DEFAULT_RETENTION_DAYS}).` }
+      }
+      value.retentionDays = n
+    }
+  }
   return { ok: true, value, remove }
 }
 
@@ -161,5 +175,6 @@ export function overlayEnv(env: NodeJS.ProcessEnv, s: Settings): NodeJS.ProcessE
   }
   if (s.accounts !== undefined) out.OCEAN_ACCOUNTS = s.accounts.join(',')
   if (s.gatewayPort !== undefined) out.OCEAN_GW_PORT = String(s.gatewayPort)
+  if (s.retentionDays !== undefined) out.OCEAN_RETENTION_DAYS = String(s.retentionDays)
   return out
 }

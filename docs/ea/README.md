@@ -1,6 +1,6 @@
 # `ea/` — Expert Advisor MT5
 
-`OceanRelay.mq5` v0.2.0 (MQL5). **Chưa được biên dịch hay chạy trên MT5 thật** — thử trên DEMO.
+`OceanRelay.mq5` v0.3.0 (MQL5). Bản MT4 (`OceanRelay.mq4`) vẫn ở logic v0.2.0 (chưa có thử lại và sai số theo pip). **Chưa được biên dịch hay chạy trên MT5 thật** — thử trên DEMO.
 
 ## Bản MT4 (`OceanRelay.mq4`)
 MT4 báo `err=5200` nếu `InpGateway` có cổng (`http://127.0.0.1:47860`). Dùng `InpGateway=http://127.0.0.1` + Allow WebRequest `http://127.0.0.1`, và chuyển cổng 80 sang cổng Gateway bằng `netsh interface portproxy` (lệnh đầy đủ: [OPERATIONS.md](../OPERATIONS.md), mục "MT4 (cổng 80)").
@@ -10,7 +10,18 @@ MT4 báo `err=5200` nếu `InpGateway` có cổng (`http://127.0.0.1:47860`). D�
 - Bật: với mỗi `S|…` mở 3 lệnh thị trường cùng SL, TP1/TP2/TP3 (hoặc 1 lệnh lot×3 với TP3 nếu `InpTP3Only`).
 
 ## Thứ tự kiểm tra trước khi đặt lệnh
-Công tắc & Algo Trading → tuổi (`InpMaxAgeSec`) → symbol → lệch giá (`InpMaxDevPoints`) → SL/TP đúng phía theo giá thật → stops level → tổng lot (`InpMaxTotalLots`) → **ghi id vào Global Variable** → gửi lệnh. Mỗi nhánh chặn trả mã ack riêng (xem [PROTOCOL.md](../PROTOCOL.md)).
+Công tắc & Algo Trading → tuổi (`InpMaxAgeSec`) → symbol → thứ tự mức (SL < Entry < TP1 ≤ TP2 ≤ TP3 với lệnh mua) → tổng lot (`InpMaxTotalLots`) → **mỗi lượt vào lệnh** (xem mục dưới): kết nối máy chủ giao dịch → giá mới lệch Entry ≤ `InpMaxDevPips` → SL/TP đúng phía theo giá thật → stops level → **ghi id vào Global Variable** → gửi từng lệnh. Mỗi nhánh chặn trả mã ack riêng (xem [PROTOCOL.md](../PROTOCOL.md)).
+
+## Khớp đúng giá Signal (v0.3.0)
+Sai số cho phép `InpMaxDevPips` (mặc định 10 pip; vàng 2 số lẻ: 1 pip = 0.1 giá nên 10 pip = 1.0 giá; `InpPipPoints` để ép số point/pip). Giá quá sai số thì **không đánh**:
+1. Mỗi lượt đọc **giá mới** rồi mới kiểm: mua so với Ask, bán so với Bid (lệch hai phía đều bị chặn).
+2. Kiểm riêng từng chân: giá đã đi qua TP của chân nào thì bỏ chân đó.
+3. Trượt giá gửi kèm lệnh = phần sai số còn lại theo hướng bất lợi, tối đa `InpSlippagePts`, để sàn từ chối nếu giá chạy qua (sàn Market execution có thể bỏ qua deviation, nên còn bước 4).
+4. Sau khi khớp, đọc lại **giá khớp**: lệch Entry quá sai số thì cảnh báo, ngừng mở nốt các chân còn lại, và đóng lệnh đó nếu `InpCloseBadFill=true` (mặc định false vì đóng lệnh là một giao dịch có spread).
+5. Trước mỗi lần thử lại, kiểm lệnh của chân đó đã vào sàn chưa (timeout nhưng lệnh vẫn khớp) để không mở lặp.
+
+## Thử lại khi mất kết nối (v0.3.0)
+Lỗi tạm thời (retcode `6` / `10031` mất kết nối, requote, timeout, off quotes, price changed, too many requests…) hoặc terminal đang mất kết nối: chân chưa mở được **thử lại mỗi `InpRetrySec` giây**, tối đa `InpRetryMaxSec` giây kể từ khi nhận tín hiệu, cho tới khi đủ 3 lệnh TP1/TP2/TP3, hoặc giá đi quá `InpMaxDevPips`, hoặc hết hạn. Lỗi không thể khắc phục (hết tiền, thị trường đóng…) thì dừng ngay. Ack: `retry:D/N` khi đang thử lại (D chân đã mở / N chân cần mở); kết thúc `opened:N`, `partial:D/N_<lý do>` hoặc mã lỗi. Hạn chế: khởi động lại/gỡ EA giữa chừng thì các lần thử lại đang chờ bị bỏ (id đã ghi nhận nên không mở lặp).
 
 ## Bảo mật
 EA chỉ nói chuyện với Gateway cục bộ, không giữ khóa nào; chữ ký do Gateway kiểm. Lệnh mang `InpMagic` và comment `OCEAN#<số>/TPn`, trong đó `<số>` là số thứ tự lệnh **trong ngày** (giờ server broker): sang ngày mới đếm lại từ 1 (bộ đếm lưu ở Global Variable `OCEANSEQ_<login>`, khởi động lại EA vẫn đếm tiếp đúng). Id đã xử lý nằm ở Global Variable `OCEAN_<login>_<id>` nên khởi động lại không mở lệnh lần hai.

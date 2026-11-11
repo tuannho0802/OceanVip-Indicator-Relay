@@ -39,9 +39,11 @@
     gwPort=v.gatewayPort;
     $('fPort').value=v.gatewayPort===v.defaultGatewayPort?'':String(v.gatewayPort);
     $('fPort').placeholder='mặc định '+v.defaultGatewayPort;
+    $('fRet').value=v.retentionDays===v.defaultRetentionDays?'':String(v.retentionDays);
+    $('fRet').placeholder='mặc định '+v.defaultRetentionDays;
     $('gwUrl').textContent='http://127.0.0.1:'+v.gatewayPort;
     mt4Ports(v.gatewayPort);
-    if(v.symbolMap||v.tfs||v.gatewayPort!==v.defaultGatewayPort)$('adv').open=true;
+    if(v.symbolMap||v.tfs||v.gatewayPort!==v.defaultGatewayPort||v.retentionDays!==v.defaultRetentionDays)$('adv').open=true;
   }
 
   async function load(){
@@ -106,6 +108,7 @@
     b.symbolMap=$('fMap').value.trim()===''?null:$('fMap').value;
     b.tfs=$('fTfs').value.trim()===''?null:$('fTfs').value;
     b.gatewayPort=$('fPort').value.trim()===''?null:$('fPort').value.trim();
+    b.retentionDays=$('fRet').value.trim()===''?null:$('fRet').value.trim();
     post(b);
   });
   $('btnDisc').addEventListener('click',()=>{
@@ -126,8 +129,41 @@
     setTimeout(()=>{b.textContent='Chép'},2500);
   }));
 
+  // Dọn log tín hiệu: chỉ hiện khi xem từ chính VPS (server chỉ trả info.retention cho người ngồi trên VPS).
+  function logMsg(kind,text){const m=$('logMsg');m.textContent=text;m.className='msg sm'+(text?' '+kind:'')}
+  function renderLogTools(i){
+    const r=i&&i.local?i.retention:null;
+    $('logTools').hidden=!r;
+    if(!r)return;
+    const parts=['Đang lưu '+r.count+' tín hiệu'];
+    parts.push(r.days>0?'tự xóa sau '+r.days+' ngày (mỗi ngày lúc '+String(r.hour).padStart(2,'0')+':00)':'không tự xóa');
+    if(r.lastAt!==null)parts.push('lần dọn gần nhất '+ago(Math.max(0,i.now-r.lastAt))+' trước, xóa '+r.lastDeleted+(r.lastAuto?' (tự động)':' (thủ công)'));
+    $('logInfo').textContent=parts.join(' · ');
+  }
+  let purging=false;
+  async function purge(body,what){
+    if(purging)return;
+    if(!window.confirm('Xóa '+what+'? Tín hiệu còn hạn giao cho EA được giữ lại. Không hoàn tác được.'))return;
+    purging=true;$('btnPurgeN').disabled=true;$('btnPurgeAll').disabled=true;logMsg('warn','Đang xóa…');
+    try{
+      const r=await fetch('/api/signals/purge',{method:'POST',headers:HDR,body:JSON.stringify(body)});
+      const d=await r.json().catch(()=>({ok:false,error:'Máy chủ trả dữ liệu không đọc được.'}));
+      if(!r.ok||!d.ok){logMsg('bad',d.error||('Lỗi '+r.status));return}
+      logMsg('ok','Đã xóa '+d.deleted+' tín hiệu'+(d.kept_fresh>0?' (giữ lại '+d.kept_fresh+' tín hiệu còn hạn)':'')+'.');
+      if(typeof window.poll==='function')window.poll();
+    }catch(e){logMsg('bad','Không gọi được Server: '+e.message)}
+    finally{purging=false;$('btnPurgeN').disabled=false;$('btnPurgeAll').disabled=false}
+  }
+  $('btnPurgeN').addEventListener('click',()=>{
+    const n=Number($('purgeDays').value);
+    if(!Number.isInteger(n)||n<1||n>3650){logMsg('bad','Số ngày phải là số nguyên từ 1 đến 3650.');return}
+    purge({mode:'older',days:n},'các tín hiệu cũ hơn '+n+' ngày');
+  });
+  $('btnPurgeAll').addEventListener('click',()=>purge({mode:'all'},'TẤT CẢ tín hiệu đã xong'));
+
   window.onData=(i,d)=>{
     info=i;live=d;
+    renderLogTools(i);
     $('setupBtn').hidden=!(i&&i.local);
     // Lần đầu mở sau khi cài: đưa thẳng tới trang Cài đặt để người dùng làm ngay.
     if(!autoOpened&&i&&i.local&&i.needsSetup&&location.hash===''){autoOpened=true;location.hash='#setup'}

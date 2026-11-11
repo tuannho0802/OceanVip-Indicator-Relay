@@ -4,9 +4,10 @@ import path from 'node:path'
 import { SKEW_SEC, type WireSignal, safeEqual, sameSecret, signBody, signSignal } from '../shared/hmac'
 import { dedupeKey, parseAlert, riskReward } from '../shared/parse'
 import { APP_VERSION, type ServerConfig } from './config'
-import { type SignalRow, Store } from './db'
+import { type PurgeSpec, type SignalRow, Store } from './db'
 import { type Logger, nullLogger } from './log'
 import { FailLimiter } from './ratelimit'
+import { MAX_RETENTION_DAYS, lastRetention, purgeNow } from './retention'
 import type { SetupController } from './setup'
 import type { TunnelStatus } from './tunnel'
 import type { IngestResult, WorkerItem } from './worker-sync'
@@ -342,6 +343,27 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
       return json(res, 405, { error: 'method_not_allowed' })
     }
 
+    // Xóa bớt log tín hiệu đã xong: chỉ từ chính VPS (cùng điều kiện trang Cài đặt), POST + x-ocean-setup + JSON.
+    // Body: {mode:'older', days:1..3650} (xóa cũ hơn N ngày) hoặc {mode:'all'} (xóa mọi tín hiệu đã xong). Tín hiệu còn hạn giao cho EA luôn được giữ.
+    if (p === '/api/signals/purge') {
+      if (!isLocalAdmin(req)) return json(res, 403, { error: 'local_only' })
+      if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' })
+      if (req.headers['x-ocean-setup'] !== '1' || !String(req.headers['content-type'] ?? '').startsWith('application/json')) return json(res, 400, { error: 'bad_request' })
+      let b: { mode?: unknown; days?: unknown }
+      try {
+        b = JSON.parse(await readBody(req, 1024)) as typeof b
+      } catch {
+        return json(res, 400, { ok: false, error: 'Dữ liệu gửi lên không đọc được.' })
+      }
+      let spec: PurgeSpec
+      if (b.mode === 'all') spec = { kind: 'all' }
+      else if (b.mode === 'older' && typeof b.days === 'number' && Number.isInteger(b.days) && b.days >= 1 && b.days <= MAX_RETENTION_DAYS) spec = { kind: 'older', days: b.days }
+      else return json(res, 400, { ok: false, error: 'Yêu cầu xóa không hợp lệ.' })
+      const r = purgeNow(store, cfg, spec, now, false)
+      log.info(`xóa tín hiệu từ giao diện (${spec.kind === 'all' ? 'tất cả đã xong' : `cũ hơn ${spec.days} ngày`}): xóa ${r.deleted}, giữ lại ${r.kept_fresh} tín hiệu còn hạn`)
+      return json(res, 200, { ok: true, ...r, count: store.signalStats().count })
+    }
+
     if (p === '/api/info' && req.method === 'GET') {
       const w = deps.workerStatus?.()
       const local = deps.setup !== undefined && isLocalAdmin(req)
@@ -352,6 +374,14 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
         // Tình trạng cổng Gateway: chỉ cho người ngồi trên VPS (người xem từ xa không cần biết cổng cục bộ).
         gateway: local
           ? { port: cfg.gatewayPortSet || gwLink.at === 0 || gwLink.port === 0 ? cfg.gatewayPort : gwLink.port, listening: gwLink.at > 0 ? gwLink.port : null, error: gwLink.error, lastSeenAgoSec: gwLink.at > 0 ? now - gwLink.at : null }
+          : null,
+        // Dọn log: chỉ người ngồi trên VPS mới thấy số liệu và nút xóa.
+        retention: isLocalAdmin(req)
+          ? (() => {
+              const st = store.signalStats()
+              const last = lastRetention(store)
+              return { days: cfg.retentionDays, hour: cfg.retentionHour, count: st.count, oldestAgeSec: st.oldest === null ? null : Math.max(0, now - st.oldest), lastAt: last?.at ?? null, lastDeleted: last?.deleted ?? null, lastAuto: last?.auto ?? null }
+            })()
           : null,
         needsSetup: cfg.workerUrl === '' && cfg.webhookKey === '',
         // Chỉ là địa chỉ ĐÃ thông (đã báo Worker). Tunnel đang tạo/đã rớt thì null, trạng thái chi tiết nằm ở `tunnel`.

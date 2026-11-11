@@ -43,6 +43,10 @@ export type TerminalRow = {
 
 export type DeliveryRow = { signal_id: number; tid: string; result: string; at: number }
 
+/** Yêu cầu xóa tín hiệu: cũ hơn N ngày, hoặc tất cả tín hiệu đã xong. */
+export type PurgeSpec = { kind: 'older'; days: number } | { kind: 'all' }
+export type PurgeResult = { deleted: number; kept_fresh: number }
+
 const MIGRATIONS: string[] = [
   `CREATE TABLE signals (
      id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -225,6 +229,35 @@ export class Store {
     if (signalIds.length === 0) return []
     const q = signalIds.map(() => '?').join(',')
     return this.db.prepare(`SELECT * FROM deliveries WHERE signal_id IN (${q})`).all(...signalIds) as DeliveryRow[]
+  }
+
+  /** Số tín hiệu đang lưu và thời điểm (giây) của tín hiệu cũ nhất (null nếu trống). */
+  signalStats(): { count: number; oldest: number | null } {
+    const r = this.db.prepare('SELECT COUNT(*) AS c, MIN(received_at) AS o FROM signals').get() as { c: number; o: number | null }
+    return { count: r.c, oldest: r.o }
+  }
+
+  /**
+   * Xóa tín hiệu ĐÃ XONG (kèm bản ghi giao nhận của chúng). Tín hiệu mới hơn `protectSec` giây được giữ lại vì EA còn có thể
+   * đang nhận/xử lý chúng (xóa nhầm sẽ làm mất ack và lệnh đang mở dở).
+   */
+  purgeSignals(spec: PurgeSpec, now: number, protectSec: number): PurgeResult {
+    const fresh = now - Math.max(0, protectSec)
+    const cut = spec.kind === 'older' ? Math.min(fresh, now - spec.days * 86400) : fresh
+    // Khoảng chọn: received_at < cut (tức đã xong và đủ cũ). Phần còn lại trong cửa sổ bảo vệ chỉ để báo số lượng giữ lại.
+    const where = 'received_at < ?'
+    this.db.exec('BEGIN')
+    try {
+      const del = (this.db.prepare(`SELECT COUNT(*) AS c FROM signals WHERE ${where}`).get(cut) as { c: number }).c
+      this.db.prepare(`DELETE FROM deliveries WHERE signal_id IN (SELECT id FROM signals WHERE ${where})`).run(cut)
+      this.db.prepare(`DELETE FROM signals WHERE ${where}`).run(cut)
+      const kept = (this.db.prepare('SELECT COUNT(*) AS c FROM signals WHERE received_at >= ?').get(fresh) as { c: number }).c
+      this.db.exec('COMMIT')
+      return { deleted: del, kept_fresh: kept }
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      throw e
+    }
   }
 
   prune(olderThan: number): void {

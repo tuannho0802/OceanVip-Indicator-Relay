@@ -4,6 +4,8 @@
 |---|---|
 | `parse.test.ts` | Parser alert |
 | `e2e.test.ts` | Webhook, Gateway+EA, ack, hết hạn, giao diện công khai che tài khoản |
+| `retention.test.ts` | Server v0.1.1: xóa tín hiệu đã xong (older/all, giữ tín hiệu còn hạn, xóa kèm giao nhận), cron theo giờ + dọn bù + đổi số ngày lúc chạy, cài đặt `retentionDays`, `POST /api/signals/purge` (chỉ từ VPS), Gateway giữ nguyên ack `opened:3`/`failed:10031` |
+| `ui-logs.test.ts` | Nút xóa log trên trang tín hiệu (jsdom): hiện số liệu, xóa tất cả/cũ hơn N ngày, Hủy xác nhận, ẩn khi xem từ xa, ô số ngày ở trang Cài đặt |
 | `worker-retention.test.ts` | Dọn tín hiệu: cron theo 7/30/90/tùy chọn ngày, xóa thủ công (giữ N ngày, khoảng ngày, hết), quyền Admin/User, bảo vệ tín hiệu chờ giao, giao diện tab Tín hiệu |
 | `worker.test.ts` | Worker thật (D1 giả trên `node:sqlite`) ↔ Server: push, kéo bù, trùng, ingest ký, WorkerSync |
 | `security.test.ts` | Chữ ký tín hiệu (sửa/phát lại/Server giả), chống dò khóa, tệp tĩnh, cấu hình, migration |

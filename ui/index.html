@@ -22,7 +22,22 @@
   <a class="btn primary sm" href="#setup">Cài đặt ngay</a>
 </div>
 <main id="app">
-  <section><h2>Tín hiệu</h2><div id="signals"></div></section>
+  <section>
+    <h2>Tín hiệu</h2>
+    <div class="card logtools" id="logTools" hidden>
+      <div class="row">
+        <span class="hint" id="logInfo"></span>
+        <span class="sp"></span>
+        <label class="inl" for="purgeDays">Xóa cũ hơn</label>
+        <input id="purgeDays" class="num" type="number" min="1" max="3650" value="1" inputmode="numeric" aria-label="Số ngày">
+        <span class="inl">ngày</span>
+        <button class="btn ghost sm" id="btnPurgeN" type="button">Xóa</button>
+        <button class="btn ghost sm danger" id="btnPurgeAll" type="button">Xóa tất cả đã xong</button>
+      </div>
+      <div class="msg sm" id="logMsg" role="status" aria-live="polite"></div>
+    </div>
+    <div id="signals"></div>
+  </section>
   <aside><h2>Terminal MT5</h2><div id="terms"></div></aside>
 </main>
 <main id="setupView" hidden>
@@ -53,6 +68,9 @@
       <label for="fTfs">Chỉ nhận tín hiệu ở các khung giờ</label>
       <input id="fTfs" type="text" autocomplete="off" spellcheck="false" placeholder="mặc định của bộ cài (M3, M5, M15, H1)">
       <p class="hint">Ví dụ M5,M15. Ghi ALL để nhận mọi khung giờ. Để trống = mặc định của bộ cài.</p>
+      <label for="fRet">Tự xóa tín hiệu đã xong sau (ngày)</label>
+      <input id="fRet" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="mặc định 7">
+      <p class="hint">Mỗi ngày một lần (lúc 03:00 giờ VPS) Server xóa tín hiệu cũ hơn số ngày này, giống Worker. Ghi 0 để không tự xóa. Tín hiệu còn hạn giao cho EA không bao giờ bị xóa. Muốn xóa ngay: dùng nút ở danh sách Tín hiệu (chỉ hiện khi mở từ chính VPS). Để trống = mặc định.</p>
       <label for="fPort">Cổng Gateway (cổng EA trong MT5 kết nối tới)</label>
       <input id="fPort" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="mặc định 47860">
       <p class="hint">Chỉ đổi khi cổng bị trùng với chương trình khác trên VPS (ví dụ Gateway khác đang dùng 47800). Từ 1024 đến 65535, không trùng cổng của Server. Để trống = mặc định. Gateway tự chuyển sang cổng mới trong vài giây, sau đó làm lại bước 3 trong MT5 với địa chỉ mới.</p>

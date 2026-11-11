@@ -2,6 +2,7 @@ import { decodeConnectCode } from '../shared/connect'
 import { DEFAULT_GW_PORT } from '../shared/defaults'
 import { ConfigError, type ServerConfig, loadConfig } from './config'
 import type { Logger } from './log'
+import { DEFAULT_RETENTION_DAYS } from './retention'
 import type { WorkerCheck } from './runtime'
 import { type Settings, mergeSettings, normalizeSettings, readSettings, writeSettings } from './settings'
 
@@ -19,6 +20,9 @@ export type SetupView = {
   /** Cổng Gateway hiện hành (EA nối tới) và cổng mặc định, để trang Cài đặt ghi đúng địa chỉ cho Allow WebRequest. */
   gatewayPort: number
   defaultGatewayPort: number
+  /** Tự xóa tín hiệu đã xong sau số ngày này (0 = không tự xóa) và mức mặc định. */
+  retentionDays: number
+  defaultRetentionDays: number
   /** 'ui' = đặt trên giao diện; 'env' = từ server.env; 'none' = chưa cài đặt. */
   source: 'ui' | 'env' | 'none'
   mode: 'quick' | 'public' | 'none'
@@ -58,6 +62,8 @@ export class SetupController {
       tfs: cfg.tfs,
       gatewayPort: cfg.gatewayPort,
       defaultGatewayPort: DEFAULT_GW_PORT,
+      retentionDays: cfg.retentionDays,
+      defaultRetentionDays: DEFAULT_RETENTION_DAYS,
       source: Object.keys(s).length > 0 ? 'ui' : cfg.workerUrl ? 'env' : 'none',
       mode: cfg.publicUrl ? 'public' : cfg.quickTunnel ? 'quick' : 'none',
     }
@@ -90,7 +96,7 @@ export class SetupController {
     // Những thứ không đổi lúc đang chạy (cổng, đường dẫn dữ liệu, khóa EA) giữ nguyên.
     const { port, host, dataDir, dbFile, logDir, logLevel, eaKey, uiDir, ...live } = next
     Object.assign(cfg, live)
-    log.info(`đã lưu cài đặt từ giao diện: worker=${cfg.workerUrl ? 'có' : 'không'} id=${cfg.serverId || '-'} tàiKhoản=${cfg.accounts.length} symbolMap=${cfg.symbolMap ? Object.keys(cfg.symbolMap).length : 'mặc định'} tfs=${cfg.tfs ? cfg.tfs.join(',') || 'tất cả' : 'mặc định'} cổngGateway=${cfg.gatewayPort}`)
+    log.info(`đã lưu cài đặt từ giao diện: worker=${cfg.workerUrl ? 'có' : 'không'} id=${cfg.serverId || '-'} tàiKhoản=${cfg.accounts.length} symbolMap=${cfg.symbolMap ? Object.keys(cfg.symbolMap).length : 'mặc định'} tfs=${cfg.tfs ? cfg.tfs.join(',') || 'tất cả' : 'mặc định'} cổngGateway=${cfg.gatewayPort} giữTínHiệu=${cfg.retentionDays}ngày`)
     const worker = await this.d.apply()
     return { ok: true, view: this.view(), worker }
   }

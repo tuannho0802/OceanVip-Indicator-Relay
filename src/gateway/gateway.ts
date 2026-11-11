@@ -123,9 +123,10 @@ export class Gateway {
 
     const acks = [...(this.pendingAcks.get(tid) ?? [])]
     for (const a of (kv.acks ?? '').split(',')) {
-      const [id, result] = a.split(':')
-      const n = Number(id)
-      if (Number.isInteger(n) && n > 0) acks.push({ id: n, result: clean(result ?? 'ok') || 'ok' })
+      // Chỉ tách ở dấu ':' ĐẦU TIÊN: kết quả của EA có thể chứa thêm ':' (opened:3, failed:10031, partial:2/3_price_dev).
+      const colon = a.indexOf(':')
+      const n = Number(colon < 0 ? a : a.slice(0, colon))
+      if (Number.isInteger(n) && n > 0) acks.push({ id: n, result: clean(colon < 0 ? 'ok' : a.slice(colon + 1)) || 'ok' })
     }
 
     const positions = (kv.pos ?? '')
