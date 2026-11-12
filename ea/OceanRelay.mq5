@@ -15,6 +15,8 @@
 //| BreakEven (tuy chon, mac dinh TAT): khi lenh TP1 (hoac TP2) chot |
 //| lai thi doi SL cac lenh con lai ve gan gia vao N don vi.         |
 //| EA chi noi chuyen voi Gateway/Server tren VPS (khong goi Worker).|
+//| LOC GIO + LOC TIN MANH (moi): ngung VAO THEM lenh theo khung gio |
+//| (VD 23:00-05:00, 07:30-08:03) va quanh tin CPI/Fed/NFP (-30p/+5p)|
 //| MAC DINH InpAllowTrading=false: chi theo doi, KHONG dat lenh.    |
 //| Chua duoc bien dich tren MT5 that: thu tren DEMO truoc.          |
 //| Dat http://127.0.0.1:47860 vao Tools > Options > Expert Advisors |
@@ -38,6 +40,9 @@ enum ENUM_BE_TRIGGER { BE_AFTER_TP1 = 1,
                        BE_AFTER_TP2 = 2 };
 enum ENUM_BE_UNIT { BE_UNIT_PRICE = 0,
                     BE_UNIT_PIPS = 1 };
+enum ENUM_TIME_SOURCE { TIME_SOURCE_LOCAL = 0,  // Giờ VPS (giờ Local của máy tính) - MẶC ĐỊNH
+                        TIME_SOURCE_SERVER = 1, // Giờ Broker (giờ máy chủ giao dịch)
+                        TIME_SOURCE_UTC = 2 };  // Giờ UTC/GMT
 
 input group "=== DANH LENH (mac dinh TAT) ==="
 input bool   InpAllowTrading = false;                // CONG TAC TONG: false = chi theo doi, khong dat lenh
@@ -63,6 +68,252 @@ input bool InpBELockProfit = false;                                            /
 input group "=== BU LENH (mac dinh TAT) ==="
 input bool   InpMakeupEnable    = false;             // BAT/TAT bu lenh: chan TP1/2/3 con thieu thi dat Limit/Stop tai Entry (chi hoat dong khi InpAllowTrading = true)
 input int    InpMakeupExpirySec = 300;               // N: bu cho tin hieu khong qua N giay tuoi (ke ca da qua InpMaxAgeSec); lenh cho tu huy sau N giay ke tu luc tin hieu phat ra (30..1800)
+
+input group "===== LỌC GIỜ NGỪNG VÀO LỆNH (PAUSE TIME FILTER) =====" input bool InpUsePauseFilter = true; // Bật/Tắt lọc giờ ngừng vào lệnh (Tắt = bỏ qua toàn bộ Khung 1/2 bên dưới; chỉ chặn VÀO THÊM lệnh, KHÔNG đóng lệnh đang mở)
+input ENUM_TIME_SOURCE InpFilterTimeSource = TIME_SOURCE_LOCAL;                                           // Nguồn giờ dùng cho Khung giờ ngừng + giờ tin nhập tay (Mặc định = Giờ VPS tức giờ Local của máy tính)
+
+input string _SP1 = "--- Khung 1: Đêm 23:00 đến 05:00 (cho phép qua nửa đêm; ngừng vào thêm lệnh) ---"; // ---
+input bool InpPause1On = true;                                                                          // Bật/Tắt Khung 1
+input int InpPause1StartH = 23;                                                                         // Giờ bắt đầu ngừng
+input int InpPause1StartM = 0;                                                                          // Phút bắt đầu ngừng
+input int InpPause1EndH = 5;                                                                            // Giờ kết thúc ngừng (nhỏ hơn giờ bắt đầu = qua nửa đêm)
+input int InpPause1EndM = 0;                                                                            // Phút kết thúc ngừng
+
+input string _SP2 = "--- Khung 2: 07:30 đến 08:03 (ngừng vào thêm lệnh) ---"; // ---
+input bool InpPause2On = true;                                                // Bật/Tắt Khung 2
+input int InpPause2StartH = 7;                                                // Giờ bắt đầu ngừng
+input int InpPause2StartM = 30;                                               // Phút bắt đầu ngừng
+input int InpPause2EndH = 8;                                                  // Giờ kết thúc ngừng
+input int InpPause2EndM = 3;                                                  // Phút kết thúc ngừng (hết phút này là được vào lệnh lại, VD 08:03:00)
+
+input group "===== LỌC TIN MẠNH (NEWS FILTER) =====" input bool InpUseNewsFilter = true; // Bật/Tắt tránh giao dịch quanh tin mạnh (chỉ chặn VÀO THÊM lệnh, KHÔNG đóng lệnh đang mở)
+input int InpNewsBeforeMin = 30;                                                         // Ngừng vào lệnh TRƯỚC giờ tin N phút (0..720)
+input int InpNewsAfterMin = 5;                                                           // Ngừng vào lệnh SAU giờ tin N phút (0..720)
+
+input string _SN1 = "--- Loại tin tự động (MT5: lấy từ Lịch kinh tế MT5 | MT4: không có lịch, dùng danh sách nhập tay bên dưới) ---"; // ---
+input string InpNewsCurrency = "USD";                                                                                                 // Đồng tiền của tin cần tránh (MT5 tự động)
+input bool InpNewsCPI = true;                                                                                                         // Tin CPI (lạm phát Mỹ: CPI, Core CPI, ...)
+input bool InpNewsFed = true;                                                                                                         // Tin Fed (FOMC, quyết định lãi suất, họp báo, biên bản, Chủ tịch Fed phát biểu)
+input bool InpNewsNFP = true;                                                                                                         // Tin Nonfarm Payrolls (NFP - bảng lương phi nông nghiệp Mỹ)
+input bool InpNewsAllHigh = false;                                                                                                    // Chặn MỌI tin mức ảnh hưởng CAO (High impact) của đồng tiền trên
+input string InpNewsExtraWords = "";                                                                                                  // Từ khóa tên tin bổ sung, ngăn bằng dấu ; (VD: PPI;Retail Sales;ISM)
+
+input string _SN2 = "--- Tin nhập tay (MT4 + MT5): mỗi tin dạng yyyy.mm.dd hh:mm, ngăn bằng dấu ; theo Nguồn giờ đã chọn ở trên ---"; // ---
+input string InpNewsManual1 = "";                                                                                                     // Danh sách tin nhập tay 1 (VD: 2026.12.04 20:30;2026.12.10 20:30)
+input string InpNewsManual2 = "";                                                                                                     // Danh sách tin nhập tay 2 (dùng khi danh sách 1 quá dài)
+
+//+------------------------------------------------------------------+
+//| LOC GIO NGUNG VAO LENH + LOC TIN MANH                            |
+//| Chi chan VAO THEM lenh (tin hieu moi, thu lai, bu lenh); KHONG   |
+//| dong/sua lenh dang mo. Ack: time_block | news_block (ket qua cuoi,|
+//| khong phai loi tam thoi nen Server khong giao lai de bu).        |
+//+------------------------------------------------------------------+
+datetime g_manNews[];     // tin nhap tay (da parse, theo Nguon gio da chon)
+string g_blockWhy = "";   // ly do dang chan (de ghi Comment/log)
+string g_blockLast = "?"; // trang thai lan truoc (chi Print khi doi)
+
+datetime FtNow() {
+    if (InpFilterTimeSource == TIME_SOURCE_UTC)
+        return TimeGMT();
+    if (InpFilterTimeSource == TIME_SOURCE_SERVER)
+        return TimeTradeServer();
+    return TimeLocal();
+}
+
+bool InMinWindow(int nowMin, int sh, int sm, int eh, int em) {
+    int s = MathMax(0, MathMin(23, sh)) * 60 + MathMax(0, MathMin(59, sm));
+    int e = MathMax(0, MathMin(23, eh)) * 60 + MathMax(0, MathMin(59, em));
+    if (s == e)
+        return false; // trung nhau = khong co khung
+    if (s < e)
+        return (nowMin >= s && nowMin < e);
+    return (nowMin >= s || nowMin < e); // qua nua dem (VD 23:00 -> 05:00)
+}
+
+string PauseBlockText() {
+    if (!InpUsePauseFilter)
+        return "";
+    datetime ft = FtNow();
+    MqlDateTime dt;
+    TimeToStruct(ft, dt);
+    int m = dt.hour * 60 + dt.min;
+    if (InpPause1On && InMinWindow(m, InpPause1StartH, InpPause1StartM, InpPause1EndH, InpPause1EndM))
+        return StringFormat("Khung 1 %02d:%02d-%02d:%02d", InpPause1StartH, InpPause1StartM, InpPause1EndH, InpPause1EndM);
+    if (InpPause2On && InMinWindow(m, InpPause2StartH, InpPause2StartM, InpPause2EndH, InpPause2EndM))
+        return StringFormat("Khung 2 %02d:%02d-%02d:%02d", InpPause2StartH, InpPause2StartM, InpPause2EndH, InpPause2EndM);
+    return "";
+}
+
+void AddManualNews(string s) {
+    StringTrimLeft(s);
+    StringTrimRight(s);
+    if (s == "")
+        return;
+    if (StringLen(s) < 16 || StringGetCharacter(s, 4) != '.' || StringGetCharacter(s, 7) != '.') {
+        Print("OceanRelay: tin nhap tay sai dinh dang, bo qua: '", s, "' (can yyyy.mm.dd hh:mm)");
+        return;
+    }
+    datetime t = StringToTime(s);
+    if (t <= 0) {
+        Print("OceanRelay: tin nhap tay khong doc duoc, bo qua: '", s, "'");
+        return;
+    }
+    int k = ArraySize(g_manNews);
+    ArrayResize(g_manNews, k + 1);
+    g_manNews[k] = t;
+}
+
+void ParseManualNews() {
+    ArrayResize(g_manNews, 0);
+    string all = InpNewsManual1 + ";" + InpNewsManual2;
+    string tk[];
+    int n = StringSplit(all, ';', tk);
+    for (int i = 0; i < n; i++)
+        AddManualNews(tk[i]);
+    if (ArraySize(g_manNews) > 0)
+        Print("OceanRelay: da nap ", ArraySize(g_manNews), " tin nhap tay (theo Nguon gio da chon)");
+}
+
+string ManualNewsBlockText() {
+    int n = ArraySize(g_manNews);
+    if (n == 0)
+        return "";
+    datetime ft = FtNow();
+    int b = MathMax(0, MathMin(720, InpNewsBeforeMin)) * 60, a = MathMax(0, MathMin(720, InpNewsAfterMin)) * 60;
+    for (int i = 0; i < n; i++)
+        if (ft >= g_manNews[i] - b && ft < g_manNews[i] + a)
+            return "Tin nhap tay " + TimeToString(g_manNews[i], TIME_DATE | TIME_MINUTES);
+    return "";
+}
+
+// ---- Lich kinh te MT5 (gio trong lich = gio server giao dich) ----
+datetime g_calT[];
+string g_calN[];
+ulong g_calNextMs = 0;
+string g_calSig = "";
+
+bool NewsNameMatch(string name) {
+    string up = name;
+    StringToUpper(up);
+    if (InpNewsCPI && (StringFind(up, "CPI") >= 0 || StringFind(up, "CONSUMER PRICE") >= 0))
+        return true;
+    if (InpNewsNFP && (StringFind(up, "NONFARM") >= 0 || StringFind(up, "NON-FARM") >= 0 || StringFind(up, "NFP") >= 0))
+        return true;
+    if (InpNewsFed && (StringFind(up, "FOMC") >= 0 || StringFind(up, "FED ") >= 0 || StringFind(up, "FEDERAL FUNDS") >= 0 || StringFind(up, "POWELL") >= 0))
+        return true;
+    if (InpNewsExtraWords != "") {
+        string w[];
+        int n = StringSplit(InpNewsExtraWords, ';', w);
+        for (int i = 0; i < n; i++) {
+            string k = w[i];
+            StringTrimLeft(k);
+            StringTrimRight(k);
+            StringToUpper(k);
+            if (k != "" && StringFind(up, k) >= 0)
+                return true;
+        }
+    }
+    return false;
+}
+
+void NewsRefresh() {
+    ArrayResize(g_calT, 0);
+    ArrayResize(g_calN, 0);
+    MqlCalendarValue v[];
+    datetime srv = TimeTradeServer();
+    ResetLastError();
+    int n = CalendarValueHistory(v, srv - 6 * 3600, srv + 48 * 3600, NULL, InpNewsCurrency);
+    if (n <= 0) {
+        g_calNextMs = GetTickCount64() + 60000; // lich chua dong bo/loi: thu lai sau 1 phut
+        if (g_calSig != "ERR")
+            Print("OceanRelay: Lich kinh te MT5 chua co du lieu (err=", GetLastError(), ") - chi dung tin nhap tay neu co");
+        g_calSig = "ERR";
+        return;
+    }
+    string sig = "";
+    for (int i = 0; i < n; i++) {
+        MqlCalendarEvent ev;
+        if (!CalendarEventById(v[i].event_id, ev))
+            continue;
+        if (ev.type == CALENDAR_TYPE_HOLIDAY)
+            continue;
+        bool hit = (InpNewsAllHigh && ev.importance == CALENDAR_IMPORTANCE_HIGH) || NewsNameMatch(ev.name);
+        if (!hit)
+            continue;
+        int k = ArraySize(g_calT);
+        ArrayResize(g_calT, k + 1);
+        ArrayResize(g_calN, k + 1);
+        g_calT[k] = v[i].time;
+        g_calN[k] = ev.name;
+        sig += (string)(long)v[i].time + ",";
+    }
+    g_calNextMs = GetTickCount64() + 600000; // lam moi moi 10 phut
+    if (sig != g_calSig) {
+        g_calSig = sig;
+        Print("OceanRelay: Lich tin se tranh (gio server, 48h toi): ", ArraySize(g_calT), " tin");
+        for (int i = 0; i < ArraySize(g_calT) && i < 12; i++)
+            Print("   ", TimeToString(g_calT[i], TIME_DATE | TIME_MINUTES), "  ", g_calN[i]);
+    }
+}
+
+string CalendarBlockText() {
+    if (GetTickCount64() >= g_calNextMs)
+        NewsRefresh();
+    int n = ArraySize(g_calT);
+    if (n == 0)
+        return "";
+    datetime srv = TimeTradeServer();
+    int b = MathMax(0, MathMin(720, InpNewsBeforeMin)) * 60, a = MathMax(0, MathMin(720, InpNewsAfterMin)) * 60;
+    for (int i = 0; i < n; i++)
+        if (srv >= g_calT[i] - b && srv < g_calT[i] + a)
+            return g_calN[i] + " " + TimeToString(g_calT[i], TIME_MINUTES) + " (gio server)";
+    return "";
+}
+
+string NewsBlockText() {
+    if (!InpUseNewsFilter)
+        return "";
+    string r = CalendarBlockText();
+    if (r != "")
+        return r;
+    return ManualNewsBlockText();
+}
+
+// Tra ve "" = duoc vao lenh | "time_block" | "news_block". g_blockWhy = ly do. Print khi trang thai doi.
+string EntryBlocked() {
+    string code = "";
+    g_blockWhy = PauseBlockText();
+    if (g_blockWhy != "")
+        code = "time_block";
+    else {
+        g_blockWhy = NewsBlockText();
+        if (g_blockWhy != "")
+            code = "news_block";
+    }
+    string st = code + "|" + g_blockWhy;
+    if (st != g_blockLast) {
+        g_blockLast = st;
+        if (code != "")
+            Print("OceanRelay: NGUNG VAO LENH (", code, ") - ", g_blockWhy);
+        else
+            Print("OceanRelay: het ngung, duoc vao lenh tro lai");
+    }
+    return code;
+}
+
+string TimeSourceLabel() {
+    if (InpFilterTimeSource == TIME_SOURCE_UTC)
+        return "gio UTC";
+    if (InpFilterTimeSource == TIME_SOURCE_SERVER)
+        return "gio Broker";
+    return "gio VPS/Local";
+}
+
+string BlockLabel() {
+    string p = !InpUsePauseFilter ? "TAT" : ((InpPause1On || InpPause2On) ? "BAT" : "BAT (ca 2 khung TAT)");
+    string n = !InpUseNewsFilter ? "TAT" : (StringFormat("BAT (-%dp/+%dp)", InpNewsBeforeMin, InpNewsAfterMin));
+    return "Loc gio: " + p + " [" + TimeSourceLabel() + "] | Loc tin: " + n + (g_blockWhy != "" ? "  >> DANG NGUNG: " + g_blockWhy : "");
+}
 
 string   g_acks = "";            // "12:received,13:received" gui kem o ping ke tiep
 ulong    g_seen[64];             // id tin hieu da xu ly (tranh log lap khi Gateway giao lai truoc khi ack toi noi)
@@ -113,9 +364,10 @@ int OnInit()
    g_trade.SetExpertMagicNumber(InpMagic);
    g_trade.SetDeviationInPoints(InpSlippagePts);
    g_trade.SetAsyncMode(false);
+   ParseManualNews();
    Print("OceanRelay ", EA_VER, " san sang. Gateway=", InpGateway, InpAllowTrading ? " | DANH LENH: BAT" : " | DANH LENH: TAT (chi theo doi)",
          " | BREAKEVEN: ", BeLabel(),
-         " | BU LENH: ", MakeupLabel(),
+         " | BU LENH: ", MakeupLabel(), " | ", BlockLabel(),
          " | SAI SO GIA: ", InpMaxDevPips > 0 ? DoubleToString(InpMaxDevPips, 1) + " pip" : "khong kiem",
          " | RETRY: moi ", IntegerToString(InpRetrySec), "s, toi da ", IntegerToString(InpRetryMaxSec), "s");
    if(InpAllowTrading && !TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)) Print("OceanRelay: CANH BAO - Algo Trading dang tat tren terminal.");
@@ -126,6 +378,7 @@ void OnDeinit(const int reason) { EventKillTimer(); Comment(""); }
 
 void OnTimer()
   {
+    EntryBlocked();    // moi giay: cap nhat trang thai loc gio/tin (log khi doi, lam moi lich tin)
     ProcessRetries();  // moi giay: thu lai cac chan lenh chua mo duoc (mat ket noi may chu giao dich...)
     CleanupPending();  // moi giay: huy lenh bu qua han (lop du phong ngoai han cua san)
     ManageBreakEven(); // moi giay, doc lap voi nhip ping Gateway
@@ -238,6 +491,7 @@ void MarkDone(ulong id) { GlobalVariableSet(GvName(id), (double)TimeCurrent()); 
 //| Ket qua ack: opened:N | pending:N | opened:D+pending:P |         |
 //|  trading_off | too_old | price_dev | bad_levels | bad_stops |      |
 //|  no_symbol | max_lots | failed:<ma> | retry:D/N | partial:D/N_<ly do>|
+//|  time_block | news_block (loc gio / loc tin: ngung vao lenh)         |
 //+------------------------------------------------------------------+
 void HandleResponse(string text)
   {
@@ -527,6 +781,15 @@ bool RunJob(RetryJob &j)
      }
    j.tries++;
    string sym = j.symbol;
+   {
+       string bc = EntryBlocked(); // vao khung ngung/gan tin giua luc dang thu lai: bo cac chan chua mo
+       if (bc != "") {
+           j.why = bc;
+           j.dropMask = all & ~Acct(j);
+           Print("OceanRelay: bo #", j.id, " - ", g_blockWhy);
+           return true;
+       }
+   }
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED))
      { j.why = "trading_off"; j.dropMask = all & ~Acct(j); Print("OceanRelay: Algo Trading tat"); return true; }
    if(!TerminalInfoInteger(TERMINAL_CONNECTED))
@@ -782,6 +1045,15 @@ void MakeupLegs(RetryJob &j)
    string sym = j.symbol;
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED))
      { j.why = "trading_off"; j.dropMask |= all & ~Acct(j); return; }
+   {
+       string bc = EntryBlocked(); // khong dat lenh bu trong khung ngung / gan tin
+       if (bc != "") {
+           j.why = bc;
+           j.dropMask |= all & ~Acct(j);
+           Print("OceanRelay: bu lenh #", j.id, " bi chan - ", g_blockWhy);
+           return;
+       }
+   }
    if(!TerminalInfoInteger(TERMINAL_CONNECTED)) { j.why = "no_connection"; return; }
    bool   buy = j.buy;
    double ask = SymbolInfoDouble(sym, SYMBOL_ASK), bid = SymbolInfoDouble(sym, SYMBOL_BID), pt = SymbolInfoDouble(sym, SYMBOL_POINT);
@@ -950,6 +1222,10 @@ string BuildCfg()
    s += CfgKv("InpBEOffset", DoubleToString(InpBEOffset, 2));
    s += CfgKv("InpBEUnit", IntegerToString((int)InpBEUnit));
    s += CfgKv("InpBELockProfit", B01(InpBELockProfit));
+   s += CfgKv("InpUsePauseFilter", B01(InpUsePauseFilter));
+   s += CfgKv("InpUseNewsFilter", B01(InpUseNewsFilter));
+   s += CfgKv("InpNewsBeforeMin", IntegerToString(InpNewsBeforeMin));
+   s += CfgKv("InpNewsAfterMin", IntegerToString(InpNewsAfterMin));
    return s;
   }
 
@@ -965,6 +1241,11 @@ string OnEntrySignal(ulong id, string side, string symbol, string tf, double ent
    Print("OceanRelay TIN HIEU: ", g_last);
    if(!InpAllowTrading) return "trading_off";
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED)) { Print("OceanRelay: Algo Trading tat"); return "trading_off"; }
+   string blk = EntryBlocked();
+   if (blk != "") {
+       Print("OceanRelay: bo #", id, " - ", g_blockWhy);
+       return blk;
+   }
    // Tin hieu qua han thuong: neu bat bu lenh va con trong cua so N giay thi KHONG bo, chuyen sang dat bu lenh cho (Limit/Stop).
    bool stale = (ageSec > InpMaxAgeSec);
    if(stale && !(MakeupOn() && ageSec <= MakeupSec())) { Print("OceanRelay: bo #", id, " qua cu (", ageSec, "s)"); return "too_old"; }
@@ -1231,5 +1512,6 @@ void UpdateComment(bool ok)
             "Sai so gia: ", InpMaxDevPips > 0 ? DoubleToString(InpMaxDevPips, 1) + " pip" : "khong kiem", "   Cho thu lai: ", IntegerToString(g_jobN), " tin hieu", "\n",
             "BreakEven: ", BeLabel(), "\n",
             "Bu lenh: ", MakeupLabel(), "\n",
+            BlockLabel(), "\n",
             "Tin hieu cuoi: ", g_last);
-  }
+}
