@@ -57,6 +57,11 @@ input bool InpTP3Only = false;                                                  
 input int InpMagic = 20261109;                                                     // Magic number cua EA (de nhan lenh cua chinh no)
 input string InpComment = "OCEAN";                                                 // Tien to comment lenh
 
+input group "=== SL/TP MO RONG (xa hon gia goc cua tin hieu) ===" input double InpSLExtend = 0.0; // SL xa hon X gia so voi SL goc (BUY: SL thap hon, SELL: SL cao hon). 0 = giu nguyen SL goc, KHONG mo rong
+input double InpTP1Extend = 0.5;                                                                  // TP1 xa hon TP1 goc X gia (BUY: cao hon, SELL: thap hon). 0 = giu nguyen. Mac dinh 0.5 gia (XAUUSD: 0.5 USD)
+input double InpTP2Extend = 0.5;                                                                  // TP2 xa hon TP2 goc X gia. 0 = giu nguyen. Mac dinh 0.5 gia
+input double InpTP3Extend = 0.5;                                                                  // TP3 xa hon TP3 goc X gia (cung ap dung khi InpTP3Only = true). 0 = giu nguyen. Mac dinh 0.5 gia
+
 input group "=== BREAKEVEN (mac dinh TAT) ===" input bool InpBEEnable = false; // BAT/TAT BreakEven (chi hoat dong khi InpAllowTrading = true)
 input ENUM_BE_TRIGGER InpBETrigger = BE_AFTER_TP1;                             // Kich hoat khi: TP1 chot lai (doi SL TP2+TP3) hoac TP2 chot lai (doi SL TP3)
 input double InpBEOffset = 3.0;                                                // N: khoang cach tu GIA VAO toi SL moi (>= 0)
@@ -820,6 +825,29 @@ string MakeupLegs(ulong id, int seq, int day, bool buy, string sym, double entry
     return "partial:" + (string)(d + p) + "/" + (string)n + "_" + why;
 }
 
+// Mo rong SL/TP so voi tin hieu goc theo don vi GIA (khong phai pip). Chi keo XA hon: BUY SL xuong/TP len, SELL SL len/TP xuong. Gia tri am bi coi la 0.
+void ApplySlTpExtend(const bool buy, double& sl, double& tp1, double& tp2, double& tp3) {
+    double dS = MathMax(0.0, InpSLExtend), d1 = MathMax(0.0, InpTP1Extend), d2 = MathMax(0.0, InpTP2Extend), d3 = MathMax(0.0, InpTP3Extend);
+    if (dS <= 0 && d1 <= 0 && d2 <= 0 && d3 <= 0)
+        return;
+    double o0 = sl, o1 = tp1, o2 = tp2, o3 = tp3;
+    if (buy) {
+        sl -= dS;
+        tp1 += d1;
+        tp2 += d2;
+        tp3 += d3;
+    } else {
+        sl += dS;
+        tp1 -= d1;
+        tp2 -= d2;
+        tp3 -= d3;
+    }
+    Print("OceanRelay: mo rong SL/TP (gia): SL ", DoubleToString(o0, 5), "->", DoubleToString(sl, 5),
+          " | TP1 ", DoubleToString(o1, 5), "->", DoubleToString(tp1, 5),
+          " | TP2 ", DoubleToString(o2, 5), "->", DoubleToString(tp2, 5),
+          " | TP3 ", DoubleToString(o3, 5), "->", DoubleToString(tp3, 5));
+}
+
 // Server giao lai tin hieu da duoc EA nay danh dau (con thieu chan): bu cac chan chua co vi the/lenh cho. Tra ve ket qua de ack.
 string MakeupRedeliver(ulong id, string side, string symbol, double entry, double sl, double tp1, double tp2, double tp3, int ageSec) {
     int seq = 0, day = 0;
@@ -834,6 +862,7 @@ string MakeupRedeliver(ulong id, string side, string symbol, double entry, doubl
     bool ok = buy ? (sl < entry && entry < tp1 && tp1 <= tp2 && tp2 <= tp3) : (sl > entry && entry > tp1 && tp1 >= tp2 && tp2 >= tp3);
     if (!ok)
         return "bad_levels";
+    ApplySlTpExtend(buy, sl, tp1, tp2, tp3);
     double lot = NormVol(sym, InpTP3Only ? InpLotPerOrder * 3 : InpLotPerOrder);
     Print("OceanRelay: Server giao lai #", id, " (lenh so ", seq, ", ", ageSec, "s) -> kiem tra va bu chan con thieu");
     string res = MakeupLegs(id, seq, day, buy, sym, entry, sl, tp1, tp2, tp3, lot, TimeCurrent() - ageSec, "");
@@ -926,6 +955,10 @@ string BuildCfg() {
     s += CfgKv("InpMaxDevPoints", IntegerToString(InpMaxDevPoints));
     s += CfgKv("InpSlippagePts", IntegerToString(InpSlippagePts));
     s += CfgKv("InpTP3Only", B01(InpTP3Only));
+    s += CfgKv("InpSLExtend", DoubleToString(InpSLExtend, 2));
+    s += CfgKv("InpTP1Extend", DoubleToString(InpTP1Extend, 2));
+    s += CfgKv("InpTP2Extend", DoubleToString(InpTP2Extend, 2));
+    s += CfgKv("InpTP3Extend", DoubleToString(InpTP3Extend, 2));
     s += CfgKv("InpMagic", IntegerToString(InpMagic));
     s += CfgKv("InpComment", InpComment);
     s += CfgKv("InpMakeupEnable", B01(InpMakeupEnable));
@@ -988,6 +1021,7 @@ string OnEntrySignal(ulong id, string side, string symbol, string tf, double ent
         Print("OceanRelay: bo #", id, " SL/TP sai phia so voi Entry");
         return "bad_levels";
     }
+    ApplySlTpExtend(buy, sl, tp1, tp2, tp3); // SL/TP thuc te dat len san = goc + muc mo rong
     int n = InpTP3Only ? 1 : 3;
     double lotEach = NormVol(symbol, InpTP3Only ? InpLotPerOrder * 3 : InpLotPerOrder);
     if (TotalExposureLots() + lotEach * n > InpMaxTotalLots + 1e-9) {
