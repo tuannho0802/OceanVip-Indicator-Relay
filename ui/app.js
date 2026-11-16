@@ -43,6 +43,7 @@ function ordersBlock(t){
   box.append(tb);return box}
 function termCard(t,now){
   const c=el('div','card');const r=el('div','row');r.append(el('span','dot'+(t.online?' on':'')),el('b','',t.login?('#'+t.login):t.tid),el('span','tf',t.server||''),el('span','time',t.online?'online':'mất '+ago(now-t.last_seen)));c.append(r);
+  if(t.remote===false){const rc=el('div','chips');rc.append(chip('Nhận tín hiệu (bật/tắt từ xa)',false));c.append(rc)}
   const m=el('div','metrics');for(const [k,v] of [['Balance',t.balance],['Equity',t.equity],['Margin',t.margin],['Free margin',t.free_margin]]){const d=el('div');d.append(el('small','',k),el('span','',fmt(v)));m.append(d)}c.append(m);
   const P=t.positions||[];if(P.length){const tb=el('table');const h=el('tr');for(const x of ['Ticket','Symbol','Loại','Lot','Giá mở','SL','TP','P/L'])h.append(el('th','',x));tb.append(h);
     for(const p of P){const tr=el('tr');tr.append(el('td','',p.ticket),el('td','',p.symbol),el('td','pos-'+p.side,p.side),el('td','',fmt(p.volume)),el('td','',fmt(p.open)),el('td','',fmt(p.sl)),el('td','',fmt(p.tp)),el('td',p.profit>=0?'pos-buy':'pos-sell',fmt(p.profit)));tb.append(tr)}c.append(tb)}

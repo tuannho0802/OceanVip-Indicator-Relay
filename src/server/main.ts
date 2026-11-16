@@ -71,9 +71,12 @@ const app = createApp(cfg, {
   tunnelUrl: () => runtime?.tunnel?.url() ?? null,
   tunnelStatus: () => runtime?.tunnel?.status() ?? null,
   workerStatus: () => ({ lastPollOk: runtime?.sync?.lastPollOk ?? 0, lastError: runtime?.sync?.lastError ?? '', pulled: runtime?.sync?.pulled ?? 0 }),
+  // Tài khoản MT mới / công tắc vừa đổi: báo Worker sớm để tab "Bật/tắt EA" thấy ngay.
+  onNewAccount: () => runtime?.sync?.notifyAccounts(),
+  onSwitched: () => runtime?.sync?.notifyAccounts(),
   setup: new SetupController({ cfg, env: process.env, log, apply: () => (runtime ? runtime.apply() : Promise.resolve(null)) }),
 })
-runtime = new Runtime(cfg, { log, ingest: app.ingestFromWorker })
+runtime = new Runtime(cfg, { log, ingest: app.ingestFromWorker, applySwitches: app.applySwitches, accounts: app.accountReports })
 
 app.server.on('error', (e: NodeJS.ErrnoException) => {
   fatal(e.code === 'EADDRINUSE' ? `Cổng ${cfg.port} đang bị chương trình khác chiếm (đổi OCEAN_PORT hoặc tắt chương trình đó)` : `Server lỗi: ${e.message}`)

@@ -183,9 +183,11 @@ export class Gateway {
     this.lastServerOk = this.clock()
     this.lastError = ''
 
-    const data = (await res.json()) as { now: number; signals: CloudSignal[]; config?: { tfs?: unknown; symbolMap?: unknown } }
+    const data = (await res.json()) as { now: number; signals: CloudSignal[]; remote?: boolean; config?: { tfs?: unknown; symbolMap?: unknown } }
     this.applyLiveConfig(data.config)
     const lines = ['OK']
+    // Dòng `R|0` = tài khoản này đang bị TẮT từ xa (EA mới hiện trạng thái trên biểu đồ). Chỉ có 2 trường nên EA cũ bỏ qua, không lỗi.
+    if (data.remote === false) lines.push('R|0')
     const skipped: Ack[] = []
     for (const s of data.signals) {
       // Chỉ nhận tín hiệu do chính Server của bạn ký (cùng khóa EA, gắn với terminal): bị sửa/giả/phát lại thì bỏ.

@@ -1,6 +1,6 @@
 # `ea/` — Expert Advisor MT5
 
-`OceanRelay.mq5` v0.4.0 (MQL5, có thử lại, sai số theo pip, bù lệnh). Bản MT4 (`OceanRelay.mq4`) v0.3.0: logic MT4 cũ (sai số theo point, chưa có hàng đợi thử lại) cộng bù lệnh. **Chưa được biên dịch hay chạy trên MT5 thật** — thử trên DEMO.
+`OceanRelay.mq5` v0.5.0 (MQL5, có thử lại, sai số theo pip, bù lệnh, hiện trạng thái bật/tắt từ xa). Bản MT4 (`OceanRelay.mq4`) v0.4.0: logic MT4 cũ (sai số theo point, chưa có hàng đợi thử lại) cộng bù lệnh. **Chưa được biên dịch hay chạy trên MT5 thật** — thử trên DEMO.
 
 ## Bản MT4 (`OceanRelay.mq4`)
 MT4 báo `err=5200` nếu `InpGateway` có cổng (`http://127.0.0.1:47860`). Dùng `InpGateway=http://127.0.0.1` + Allow WebRequest `http://127.0.0.1`, và chuyển cổng 80 sang cổng Gateway bằng `netsh interface portproxy` (lệnh đầy đủ: [OPERATIONS.md](../OPERATIONS.md), mục "MT4 (cổng 80)").
@@ -11,6 +11,9 @@ MT4 báo `err=5200` nếu `InpGateway` có cổng (`http://127.0.0.1:47860`). D�
 
 ## Thứ tự kiểm tra trước khi đặt lệnh
 Công tắc & Algo Trading → tuổi (`InpMaxAgeSec`) → symbol → thứ tự mức (SL < Entry < TP1 ≤ TP2 ≤ TP3 với lệnh mua) → tổng lot (`InpMaxTotalLots`) → **mỗi lượt vào lệnh** (xem mục dưới): kết nối máy chủ giao dịch → giá mới lệch Entry ≤ `InpMaxDevPips` → SL/TP đúng phía theo giá thật → stops level → **ghi id vào Global Variable** → gửi từng lệnh. Mỗi nhánh chặn trả mã ack riêng (xem [PROTOCOL.md](../PROTOCOL.md)).
+
+## Bật/tắt từ xa (MT5 v0.5.0 · MT4 v0.4.0)
+Admin/chủ VPS (hoặc người được cấp quyền) tắt một tài khoản MT trên tab **Bật/tắt EA** của Worker: Server ngừng giao tín hiệu cho tài khoản đó nên EA không vào lệnh mới; EA chỉ hiện dòng `NHAN TIN HIEU: TAT TU XA` trên biểu đồ (từ dòng `R|0` của Gateway). Không cần input mới. EA đời cũ vẫn bị chặn đúng vì việc chặn nằm ở Server.
 
 ## Khớp đúng giá Signal (v0.3.0)
 Sai số cho phép `InpMaxDevPips` (mặc định 10 pip; vàng 2 số lẻ: 1 pip = 0.1 giá nên 10 pip = 1.0 giá; `InpPipPoints` để ép số point/pip). Giá quá sai số thì **không đánh**:

@@ -43,7 +43,7 @@ const CLIENT_JS = String.raw`
 (function () {
   'use strict'
   var root = document.getElementById('root')
-  var S = { loaded: false, tab: 'conn', user: null, setup: 'ok', notice: '', ov: null, sigs: null, ret: null, codes: {}, secret: null, probes: {}, probing: {} }
+  var S = { loaded: false, tab: 'conn', user: null, setup: 'ok', notice: '', ov: null, ea: null, sigs: null, ret: null, codes: {}, secret: null, probes: {}, probing: {} }
   var toastTimer = 0
 
   function add(e, c) {
@@ -126,11 +126,15 @@ const CLIENT_JS = String.raw`
   function loadSigs() {
     return Promise.all([api('GET', '/api/signals'), api('GET', '/api/signals/retention')]).then(function (r) { S.sigs = r[0]; S.ret = r[1] })
   }
+  /** Tải trang Bật/tắt EA (đã lọc theo quyền của người xem ở phía Worker). */
+  function loadEa() {
+    return api('GET', '/api/ea').then(function (d) { S.ea = d })
+  }
   function refresh() {
     return api('GET', '/api/overview').then(function (o) {
       S.ov = o
       S.user = o.user
-      return S.tab === 'sigs' ? loadSigs() : null
+      return S.tab === 'sigs' ? loadSigs() : (S.tab === 'ea' ? loadEa() : null)
     }).then(render).catch(fail)
   }
 
@@ -177,7 +181,7 @@ const CLIENT_JS = String.raw`
 
   function dashView() {
     var admin = S.user.role === 'admin'
-    var tabs = [['conn', 'Kết nối'], ['sigs', 'Tín hiệu'], ['guide', 'Hướng dẫn']]
+    var tabs = [['conn', 'Kết nối'], ['ea', 'Bật/tắt EA'], ['sigs', 'Tín hiệu'], ['guide', 'Hướng dẫn']]
     if (admin) tabs.splice(1, 0, ['users', 'Người dùng'])
     tabs.push(['acct', 'Tài khoản'])
     var wrap = h('div', null,
@@ -191,6 +195,7 @@ const CLIENT_JS = String.raw`
       })))
     if (S.secret) add(wrap, secretBox())
     if (S.tab === 'conn') add(wrap, connView())
+    else if (S.tab === 'ea') add(wrap, eaView())
     else if (S.tab === 'users' && admin) add(wrap, usersView())
     else if (S.tab === 'sigs') add(wrap, sigsView())
     else if (S.tab === 'acct') add(wrap, passwordCard(false))
@@ -362,6 +367,69 @@ const CLIENT_JS = String.raw`
     return out
   }
 
+  // ---------- Bật/tắt EA theo tài khoản MT ----------
+  function eaAccountRow(s, a) {
+    return h('div', { class: 'row', style: 'margin-top:6px' },
+      h('span', { class: 'mono', text: '#' + a.login }),
+      a.broker ? h('span', { class: 'muted', text: a.broker }) : null,
+      h('span', { class: 'badge ' + (a.enabled ? 'ok' : 'bad'), text: a.enabled ? 'ĐANG BẬT' : 'ĐANG TẮT' }),
+      a.applied ? null : h('span', { class: 'badge warn', text: 'Đang chờ VPS áp dụng' }),
+      h('span', { class: 'grow' }),
+      h('button', { class: a.enabled ? 'dng' : 'pri', 'data-act': 'eaToggle', 'data-server': s.id, 'data-login': a.login, 'data-v': a.enabled ? '0' : '1', disabled: s.locked ? true : null, text: a.enabled ? 'Tắt' : 'Bật' }))
+  }
+  function eaAccessBox(s, d) {
+    var box = h('div', { style: 'margin-top:12px;border-top:1px solid #17394d;padding-top:10px' },
+      h('div', { class: 'muted', text: 'Cấp quyền: người được cấp chỉ thấy và chỉ bật/tắt được những tài khoản MT bạn tick; tài khoản còn lại họ không thấy.' }))
+    s.access.forEach(function (x) {
+      add(box, h('div', { class: 'row', style: 'margin-top:8px' },
+        h('b', { text: x.username }),
+        x.locked ? h('span', { class: 'badge bad', text: 'Tài khoản bị khóa' }) : null,
+        s.accounts.length === 0 ? h('span', { class: 'muted', text: '(VPS chưa báo tài khoản MT nào để chọn)' }) : null,
+        s.accounts.map(function (a) {
+          return h('label', { style: 'flex-direction:row;align-items:center;gap:5px;color:#e6f4f8' },
+            h('input', { type: 'checkbox', 'data-change': 'eaGrant', 'data-server': s.id, 'data-user': x.user_id, 'data-login': a.login, checked: x.logins.indexOf(a.login) >= 0 ? true : null }),
+            '#' + a.login)
+        }),
+        h('span', { class: 'grow' }),
+        h('button', { class: 'dng', 'data-act': 'eaRevoke', 'data-server': s.id, 'data-user': x.user_id, 'data-name': x.username, text: 'Thu hồi' })))
+    })
+    var has = {}
+    s.access.forEach(function (x) { has[x.user_id] = true })
+    var free = d.users.filter(function (u) { return !has[u.id] && u.username !== s.owner_name })
+    if (free.length > 0) {
+      add(box, h('form', { 'data-form': 'eaGrantAdd', 'data-server': s.id, class: 'row', style: 'margin-top:8px' },
+        h('select', { name: 'user' }, free.map(function (u) { return h('option', { value: u.id, text: u.username }) })),
+        h('button', { type: 'submit', text: '+ Cấp VPS này cho người dùng' })))
+    } else if (s.access.length === 0) {
+      add(box, h('div', { class: 'muted', style: 'margin-top:6px', text: 'Chưa có người dùng nào để cấp (tạo tài khoản ở tab Người dùng).' }))
+    }
+    return box
+  }
+  function eaServerCard(s, d, admin) {
+    var card = h('div', { class: 'card' + (s.locked ? ' locked' : ''), 'data-server': s.id },
+      h('div', { class: 'row' },
+        h('h3', { text: s.name }),
+        s.mine ? h('span', { class: 'badge ok', text: 'VPS của tôi' }) : (admin ? null : h('span', { class: 'badge', text: 'Được cấp quyền' })),
+        s.locked ? h('span', { class: 'badge bad', text: 'VPS đang bị khóa' }) : null,
+        h('span', { class: 'muted grow', text: admin && s.owner_name ? 'Chủ: ' + s.owner_name : '' })))
+    if (s.accounts.length === 0) {
+      add(card, h('div', { class: 'muted', style: 'margin-top:8px', text: s.manage ? 'VPS chưa báo tài khoản MT nào. Cần Server bản mới trên VPS và EA đã chạy ít nhất một lần thì tài khoản mới hiện ở đây.' : 'Bạn chưa được chọn tài khoản nào trên VPS này. Liên hệ Admin.' }))
+    }
+    s.accounts.forEach(function (a) { add(card, eaAccountRow(s, a)) })
+    if (admin) add(card, eaAccessBox(s, d))
+    return card
+  }
+  function eaView() {
+    var d = S.ea
+    if (!d) return h('p', { class: 'muted', text: 'Đang tải…' })
+    var admin = S.user.role === 'admin'
+    var out = h('div', null,
+      h('div', { class: 'note', text: 'Bật/tắt nhận tín hiệu cho từng tài khoản MT. TẮT = EA không nhận tín hiệu mới nên không vào lệnh mới (tín hiệu đến lúc tắt bị bỏ, bật lại không bắn bù). Lệnh đang mở vẫn do EA tự quản lý (SL/TP, BreakEven).' }))
+    if (d.servers.length === 0) add(out, h('p', { class: 'muted', text: admin ? 'Chưa có VPS nào trong Worker.' : 'Bạn chưa có VPS nào và chưa được cấp quyền tài khoản nào. Liên hệ Admin.' }))
+    d.servers.forEach(function (s) { add(out, eaServerCard(s, d, admin)) })
+    return out
+  }
+
   function usersView() {
     var ov = S.ov
     if (!ov || !ov.users) return h('p', { class: 'muted', text: 'Đang tải…' })
@@ -489,6 +557,13 @@ const CLIENT_JS = String.raw`
           ['Gửi thử nhưng VPS không nhận', 'VPS chưa báo địa chỉ tunnel nên Worker không đẩy trực tiếp được.', 'Cần VPS báo địa chỉ tunnel để Worker đẩy trực tiếp; nếu quá vài phút vẫn không thấy, kiểm tra trạng thái VPS và tunnel.'],
           ['Không tạo được VPS/Webhook mới', 'Hết hạn mức hoặc Admin đang khóa việc thêm mới.', 'Liên hệ Admin tăng hạn mức hoặc mở khóa.']
         ].map(function (r) { return h('tr', null, r.map(function (c) { return h('td', { text: c }) })) }))),
+      h('h2', { text: 'Bật/tắt EA từ xa và cấp quyền' }),
+      sec('Dùng tab “Bật/tắt EA”', ol([
+        'Cần Server trên VPS bản mới (có bật/tắt từ xa) và EA đã chạy ít nhất một lần: tài khoản MT sẽ tự hiện trong tab này.',
+        'Bấm Tắt: EA ngừng nhận tín hiệu mới nên không vào lệnh mới; lệnh đang mở vẫn do EA tự quản lý. Bấm Bật để nhận lại (tín hiệu đến lúc tắt không bắn bù).',
+        'Admin cấp quyền: ở thẻ VPS bấm “+ Cấp VPS này cho người dùng”, rồi tick đúng các tài khoản MT cho phép. Người đó chỉ thấy các tài khoản được tick.',
+        'Nếu hiện “Đang chờ VPS áp dụng”: tunnel đang rớt, VPS sẽ tự áp dụng khi liên lạc lại với Worker (thường trong vài chục giây).'
+      ])),
       h('p', { class: 'muted' }, 'Hướng dẫn vận hành Worker dành cho Admin: ', h('a', { href: '/help', text: '/help' })))
   }
 
@@ -508,10 +583,11 @@ const CLIENT_JS = String.raw`
       S.tab = t.getAttribute('data-v')
       S.secret = null
       if (S.tab === 'sigs') loadSigs().then(render).catch(fail)
+      else if (S.tab === 'ea') loadEa().then(render).catch(fail)
       else if (S.tab === 'conn' || S.tab === 'users') refresh()
       render()
     },
-    logout: function () { call('POST', '/api/logout').then(function () { S.user = null; S.ov = null; S.sigs = null; S.codes = {}; S.secret = null; S.notice = ''; render() }) },
+    logout: function () { call('POST', '/api/logout').then(function () { S.user = null; S.ov = null; S.ea = null; S.sigs = null; S.codes = {}; S.secret = null; S.notice = ''; render() }) },
     copyText: function (t) { copy(t.getAttribute('data-v')) },
     closeSecret: function () { S.secret = null; render() },
     reloadSigs: function () { loadSigs().then(render).catch(fail) },
@@ -584,6 +660,20 @@ const CLIENT_JS = String.raw`
       if (!window.confirm('Xóa tài khoản này cùng toàn bộ VPS, Webhook và tín hiệu của họ? Không hoàn tác được.')) return
       call('DELETE', '/api/users/' + t.getAttribute('data-id'), null, 'Đã xóa tài khoản').then(function (r) { if (r) refresh() })
     },
+    eaToggle: function (t) {
+      var on = t.getAttribute('data-v') === '1'
+      call('PUT', '/api/ea/' + t.getAttribute('data-server') + '/accounts/' + t.getAttribute('data-login'), { enabled: on }).then(function (r) {
+        if (!r) return
+        if (r.applied) toast(on ? 'Đã BẬT: tài khoản nhận tín hiệu trở lại' : 'Đã TẮT: tài khoản không nhận tín hiệu mới')
+        else toast('Đã lưu. VPS chưa nhận ngay (' + (r.push_error || 'chưa rõ lý do') + '): sẽ tự áp dụng khi VPS liên lạc lại với Worker.', true)
+        loadEa().then(render).catch(fail)
+        if (!r.applied) { [5000, 20000, 60000].forEach(function (ms) { setTimeout(function () { if (S.user && S.tab === 'ea') loadEa().then(render).catch(function () {}) }, ms) }) }
+      })
+    },
+    eaRevoke: function (t) {
+      if (!window.confirm('Thu hồi mọi quyền của “' + t.getAttribute('data-name') + '” trên VPS này?')) return
+      call('DELETE', '/api/ea/' + t.getAttribute('data-server') + '/access/' + t.getAttribute('data-user'), null, 'Đã thu hồi quyền').then(function (r) { if (r) loadEa().then(render).catch(fail) })
+    },
     addServerFor: function (t) {
       call('POST', '/api/servers', { user_id: Number(t.getAttribute('data-id')) }).then(function (r) {
         if (!r) return
@@ -629,6 +719,9 @@ const CLIENT_JS = String.raw`
         refresh()
       })
     },
+    eaGrantAdd: function (f) {
+      call('PUT', '/api/ea/' + f.getAttribute('data-server') + '/access/' + val(f, 'user'), { logins: [] }, 'Đã cấp VPS: hãy tick tài khoản MT mà người đó được phép dùng').then(function (r) { if (r) loadEa().then(render).catch(fail) })
+    },
     addServer: function (f) {
       call('POST', '/api/servers', { name: val(f, 'name') }).then(function (r) {
         if (!r) return
@@ -666,6 +759,16 @@ const CLIENT_JS = String.raw`
   })
   root.addEventListener('change', function (ev) {
     var el = ev.target
+    if (el.getAttribute && el.getAttribute('data-change') === 'eaGrant') {
+      var sid = el.getAttribute('data-server')
+      var uid = el.getAttribute('data-user')
+      var logins = []
+      root.querySelectorAll('input[data-change="eaGrant"]').forEach(function (c) {
+        if (c.getAttribute('data-server') === sid && c.getAttribute('data-user') === uid && c.checked) logins.push(c.getAttribute('data-login'))
+      })
+      call('PUT', '/api/ea/' + sid + '/access/' + uid, { logins: logins }, 'Đã lưu danh sách tài khoản được cấp').then(function () { loadEa().then(render).catch(fail) })
+      return
+    }
     if (el.getAttribute && el.getAttribute('data-change') === 'hookTarget') {
       call('PATCH', '/api/hooks/' + el.getAttribute('data-id'), { server: el.value || null }, 'Đã đổi nơi giao').then(function () { refresh() })
     }

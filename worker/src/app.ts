@@ -1,6 +1,7 @@
 import { SERVER_ID_RE, deriveServerKey, encodeConnectCode } from '../../src/shared/connect'
 import { COOKIE, SESSION_SEC, burnPassword, hashPassword, passwordProblem, randomToken, readCookie, sessionCookie, sha256Hex, tempPassword, verifyPassword } from './auth'
 import { ONLINE_SEC, hookTargets, normalizeOrigin, probeServer, readDiags, storeAndDeliver } from './deliver'
+import { dropServerEa, dropUserEa, eaRoute } from './ea'
 import type { Ctx, Env } from './handler'
 import { json } from './http'
 import { MAX_RETENTION_DAYS, getRetentionDays, lastRun, purge, setRetentionDays, stats } from './retention'
@@ -201,6 +202,7 @@ async function dropServer(env: Env, id: string, now: number): Promise<void> {
   await env.DB.prepare('INSERT OR IGNORE INTO revoked_servers (id, at) VALUES (?, ?)').bind(id, now).run()
   await env.DB.prepare('DELETE FROM deliveries WHERE server = ?').bind(id).run()
   await env.DB.prepare('UPDATE hooks SET server = NULL WHERE server = ?').bind(id).run()
+  await dropServerEa(env, id)
   await env.DB.prepare('DELETE FROM servers WHERE id = ?').bind(id).run()
 }
 
@@ -211,7 +213,7 @@ export async function appRoute(req: Request, env: Env, ctx: Ctx, url: URL, deps:
   const m = req.method
   const parts = p.split('/').filter(Boolean) // ['api', 'servers', ':id', 'code']
   const head = parts[1] ?? ''
-  if (!['session', 'login', 'logout', 'password', 'overview', 'servers', 'hooks', 'users', 'signals'].includes(head)) return null
+  if (!['session', 'login', 'logout', 'password', 'overview', 'servers', 'hooks', 'users', 'signals', 'ea'].includes(head)) return null
 
   // Chống CSRF: yêu cầu ghi từ trình duyệt phải cùng nguồn (cookie còn SameSite=Strict).
   if (m !== 'GET' && m !== 'HEAD') {
@@ -280,6 +282,9 @@ export async function appRoute(req: Request, env: Env, ctx: Ctx, url: URL, deps:
   if (u.must_change === 1) return err(403, 'must_change_password', 'Hãy đổi mật khẩu trước khi dùng tiếp')
 
   if (head === 'overview' && m === 'GET') return overview(env, u, workerUrl, now)
+
+  // ---- Bật/tắt EA từ xa theo tài khoản MT + cấp quyền (ea.ts) ----
+  if (head === 'ea') return eaRoute(req, env, parts, { id: u.id, role: u.role, username: u.username }, () => readBody(req), { now, fetchFn: deps.fetchFn })
 
   // ---- Dọn tín hiệu: cấu hình tự dọn (chỉ Admin đổi) và xóa thủ công (Admin: của mọi người; User: của mình) ----
   if (head === 'signals' && parts[2] === 'retention') {
@@ -569,6 +574,8 @@ export async function appRoute(req: Request, env: Env, ctx: Ctx, url: URL, deps:
         await env.DB.prepare('INSERT OR IGNORE INTO revoked_servers (id, at) SELECT id, ? FROM servers WHERE owner = ?').bind(now, uid).run()
         await env.DB.prepare('DELETE FROM deliveries WHERE server IN (SELECT id FROM servers WHERE owner = ?) OR sid IN (SELECT id FROM signals WHERE owner = ?)').bind(uid, uid).run()
         await env.DB.prepare('DELETE FROM signals WHERE owner = ?').bind(uid).run()
+        for (const sv of (await env.DB.prepare('SELECT id FROM servers WHERE owner = ?').bind(uid).all<{ id: string }>()).results) await dropServerEa(env, sv.id)
+        await dropUserEa(env, uid)
         await env.DB.prepare('DELETE FROM servers WHERE owner = ?').bind(uid).run()
         await env.DB.prepare('DELETE FROM hooks WHERE owner = ?').bind(uid).run()
         await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(uid).run()

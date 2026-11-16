@@ -1,5 +1,6 @@
 import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { Gateway } from '../src/gateway/gateway'
 import { type App, createApp } from '../src/server/app'
 import { signBody } from '../src/shared/hmac'
 import { sanitizeAccountReports, sanitizeSwitchItem } from '../src/shared/switch'
@@ -137,6 +138,18 @@ describe('công tắc chặn tín hiệu ở Server', () => {
         const a = await publish(4100)
         expect((await ping('111')).signals.map((s) => s.id)).toEqual([a.id])
     })
+})
+
+describe('Gateway báo trạng thái cho EA', () => {
+  it('tài khoản bị TẮT: Gateway thêm dòng R|0 (EA cũ bỏ qua vì chỉ có 2 trường); BẬT lại thì hết', async () => {
+    const gw = new Gateway({ port: 0, serverUrl: base, key: EA_KEY, tfs: [], symbolMap: {}, timeoutMs: 1500 }, fetch, () => now)
+    const body = 'login=111\nserver=Demo\nbal=1\neq=1\nver=0.5.0'
+    expect((await gw.handlePing(body)).text).toBe('OK')
+    await pushSwitch(sw('111', false, 1))
+    expect((await gw.handlePing(body)).text).toBe('OK\nR|0')
+    await pushSwitch(sw('111', true, 2))
+    expect((await gw.handlePing(body)).text).toBe('OK')
+  })
 })
 
 describe('báo tài khoản cho Worker', () => {

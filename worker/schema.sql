@@ -72,3 +72,34 @@ CREATE TABLE IF NOT EXISTS revoked_servers (
 );
 CREATE INDEX IF NOT EXISTS servers_owner ON servers (owner);
 CREATE INDEX IF NOT EXISTS signals_owner ON signals (owner, id);
+
+-- ==== Bật/tắt EA từ xa + cấp quyền theo tài khoản MT (khớp migrations/0004_ea_access.sql) ====
+CREATE TABLE IF NOT EXISTS accounts (
+  server TEXT NOT NULL,                      -- servers.id
+  login TEXT NOT NULL,                       -- số tài khoản MT4/MT5 (chỉ chữ số)
+  broker TEXT,                               -- tên máy chủ sàn (để nhận diện)
+  seen INTEGER NOT NULL DEFAULT 0,           -- giây Unix lần VPS báo gần nhất
+  enabled INTEGER NOT NULL DEFAULT 1,        -- công tắc mong muốn: 1 = nhận tín hiệu, 0 = tắt
+  rev INTEGER NOT NULL DEFAULT 0,            -- tăng 1 mỗi lần đổi công tắc
+  applied_rev INTEGER NOT NULL DEFAULT 0,    -- rev mà VPS đã xác nhận áp dụng (rev > applied_rev = còn chờ VPS)
+  changed INTEGER NOT NULL DEFAULT 0,        -- giây Unix lần đổi công tắc gần nhất
+  changed_by INTEGER,                        -- users.id người đổi
+  PRIMARY KEY (server, login)
+);
+-- server_access: Admin cho phép một User thấy VPS này (kèm danh sách tài khoản ở account_grants).
+CREATE TABLE IF NOT EXISTS server_access (
+  user_id INTEGER NOT NULL,
+  server TEXT NOT NULL,
+  created INTEGER NOT NULL DEFAULT 0,
+  granted_by INTEGER,
+  PRIMARY KEY (user_id, server)
+);
+CREATE INDEX IF NOT EXISTS server_access_server ON server_access (server);
+-- account_grants: trong VPS đó, User được thấy và bật/tắt đúng những tài khoản MT này (tài khoản còn lại User không biết có).
+CREATE TABLE IF NOT EXISTS account_grants (
+  user_id INTEGER NOT NULL,
+  server TEXT NOT NULL,
+  login TEXT NOT NULL,
+  PRIMARY KEY (user_id, server, login)
+);
+CREATE INDEX IF NOT EXISTS account_grants_server ON account_grants (server, login);

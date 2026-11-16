@@ -28,7 +28,7 @@
 
 #include <Trade\Trade.mqh>
 
-#define EA_VER "0.4.0"
+#define EA_VER "0.5.0"
 
 input string InpGateway = "http://127.0.0.1:47860";  // Gateway cuc bo (phai nam trong Allow WebRequest)
 input int    InpPingSec = 2;                         // Nhip ping (giay, toi thieu 1)
@@ -115,6 +115,7 @@ input string InpNewsManual2 = "";                                               
 //+------------------------------------------------------------------+
 datetime g_manNews[];     // tin nhap tay (da parse, theo Nguon gio da chon)
 string g_blockWhy = "";   // ly do dang chan (de ghi Comment/log)
+bool   g_remoteOff = false; // true = tai khoan nay dang bi TAT tu xa (Worker): Server khong giao tin hieu nao
 string g_blockLast = "?"; // trang thai lan truoc (chi Print khi doi)
 
 datetime FtNow() {
@@ -502,8 +503,11 @@ void HandleResponse(string text)
   {
    string lines[];
    int nl = StringSplit(text, '\n', lines);
+   g_remoteOff = false;
    for(int i = 1; i < nl; i++) // dong 0 la "OK"
      {
+      // Dong "R|0" = tai khoan bi TAT tu xa (Server da chan tin hieu; EA chi hien trang thai). Khong co dong nay = dang BAT.
+      if(StringFind(lines[i], "R|0") == 0) { g_remoteOff = true; continue; }
       string f[];
       int nf = StringSplit(lines[i], '|', f);
       if(nf < 3) continue;
@@ -1547,6 +1551,7 @@ void UpdateComment(bool ok)
   {
     Comment("OceanRelay ", EA_VER, InpAllowTrading ? "  [DANH LENH: BAT]" : "  [CHI THEO DOI]", "\n",
             ok ? "Gateway: OK" : "Gateway: LOI (xem tab Experts)", "\n",
+            g_remoteOff ? "NHAN TIN HIEU: TAT TU XA (bat lai tren trang Worker)" : "Nhan tin hieu: BAT", "\n",
             "Sai so gia: ", InpMaxDevPips > 0 ? DoubleToString(InpMaxDevPips, 1) + " pip" : "khong kiem", "   Cho thu lai: ", IntegerToString(g_jobN), " tin hieu", "\n",
             "BreakEven: ", BeLabel(), "\n",
             "Bu lenh: ", MakeupLabel(), "\n",

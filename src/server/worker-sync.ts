@@ -1,3 +1,4 @@
+import { type AccountReport, type SwitchItem, sanitizeSwitchItems } from '../shared/switch'
 import type { Logger } from './log'
 
 export type WorkerItem = { wid: number; age: number; raw: string }
@@ -13,6 +14,10 @@ export type WorkerSyncOptions = {
     log: Logger
     /** Đưa một tín hiệu vào Server (đồng bộ). 'dup' = đã có (push đã tới trước), 'bad' = hỏng nhưng đã xử lý xong. */
     ingest: (item: WorkerItem) => IngestResult
+    /** Áp các lệnh bật/tắt tài khoản MT do Worker gửi kèm khi kéo bù. Không có = bỏ qua (Server đời cũ). */
+    applySwitches?: (items: SwitchItem[]) => boolean
+    /** Danh sách tài khoản MT + công tắc đang áp dụng để báo lên Worker. Không có = không báo. */
+    accounts?: () => AccountReport[]
     fetchFn?: typeof fetch
     clock?: () => number
     /** Chỉ để kiểm thử: các mốc thử lại báo địa chỉ (giây). */
@@ -54,6 +59,9 @@ export class WorkerSync {
     private chain: Promise<unknown> = Promise.resolve()
     private retryTimer: NodeJS.Timeout | null = null
     private retryN = 0
+    /** Bản danh sách tài khoản đã báo lên Worker gần nhất (so sánh để không báo lặp). */
+    private reportedAccounts = ''
+    private accountsTimer: NodeJS.Timeout | null = null
 
     constructor(private readonly o: WorkerSyncOptions) { }
 
@@ -108,6 +116,43 @@ export class WorkerSync {
         if (this.timer) clearTimeout(this.timer)
         if (this.retryTimer) clearTimeout(this.retryTimer)
         this.retryTimer = null
+        if (this.accountsTimer) clearTimeout(this.accountsTimer)
+        this.accountsTimer = null
+    }
+
+    /**
+     * Có tài khoản MT mới hoặc công tắc vừa đổi: báo danh sách lên Worker sớm (gộp các lần gọi liên tiếp trong 1 giây),
+     * không đợi nhịp kéo kế tiếp (có thể là 300 giây).
+     */
+    notifyAccounts(): void {
+        if (this.stopped || !this.o.accounts || this.accountsTimer) return
+        this.accountsTimer = setTimeout(() => {
+            this.accountsTimer = null
+            void this.reportAccounts().catch(() => { /* lần kéo sau báo lại */ })
+        }, 1000)
+        this.accountsTimer.unref()
+    }
+
+    /** Báo danh sách tài khoản MT lên Worker (`POST /api/accounts`). `force` = báo cả khi không đổi (xác nhận đã áp công tắc). */
+    async reportAccounts(force = false): Promise<void> {
+        if (!this.o.accounts) return
+        const list = this.o.accounts()
+        const body = JSON.stringify({ accounts: list })
+        if (!force && body === this.reportedAccounts) return
+        try {
+            const res = await this.f(`${this.o.workerUrl}/api/accounts`, {
+                method: 'POST',
+                headers: this.headers(),
+                body,
+                signal: AbortSignal.timeout(REQ_TIMEOUT_MS),
+            })
+            await res.body?.cancel()
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            this.reportedAccounts = body
+        } catch (e) {
+            this.o.log.warn(`worker: báo tài khoản MT lên Worker lỗi: ${String((e as Error).message ?? e).slice(0, 120)}`)
+            this.reportedAccounts = ''
+        }
     }
 
     /** Địa chỉ VPS mà Worker nên đẩy tới (null = chưa có/đã rớt). Gửi ngay, và tự gửi lại ở các nhịp sau nếu lỗi. */
@@ -217,9 +262,9 @@ export class WorkerSync {
             this.o.log.warn(`worker: ${this.lastError}`)
             return false
         }
-        let data: { items?: unknown; tunnel?: unknown; poll?: unknown }
+        let data: { items?: unknown; tunnel?: unknown; poll?: unknown; switches?: unknown }
         try {
-            data = (await res.json()) as { items?: unknown; tunnel?: unknown; poll?: unknown }
+            data = (await res.json()) as { items?: unknown; tunnel?: unknown; poll?: unknown; switches?: unknown }
         } catch {
             this.lastError = 'Worker trả dữ liệu không đọc được'
             return false
@@ -234,6 +279,15 @@ export class WorkerSync {
             if (held !== want) {
                 this.reportedUrl = undefined
                 void this.reportUrl().catch(() => { /* đã ghi log và hẹn thử lại */ })
+            }
+        }
+        // Công tắc bật/tắt mà đường đẩy trực tiếp chưa tới được: áp rồi báo lại Worker (Worker chỉ gửi những công tắc chưa được xác nhận).
+        let switched = false
+        if (this.o.applySwitches) {
+            const list = sanitizeSwitchItems(data.switches)
+            if (list.length > 0) {
+                this.o.applySwitches(list)
+                switched = true
             }
         }
         const items = Array.isArray(data.items) ? data.items : []
@@ -261,6 +315,8 @@ export class WorkerSync {
                 // chưa ack được thì lần kéo sau gặp lại, Server nhận ra 'dup' nên không nhận hai lần
             }
         }
+        // Báo danh sách tài khoản khi có thay đổi (tài khoản mới, công tắc vừa áp). Không đổi thì không tốn request.
+        await this.reportAccounts(switched)
         return true
     }
 }

@@ -22,7 +22,11 @@ describe.each(Object.entries(EAS))('EA %s', (_name, src) => {
   })
   it('bản EA_VER mới hơn bản không có bù lệnh', () => {
     const v = /#define EA_VER "(\d+\.\d+\.\d+)"/.exec(src)?.[1] ?? ''
-    expect(v).toMatch(/^0\.[34]\.\d+$/)
+    expect(v).toMatch(/^0\.[3-9]\.\d+$/)
+  })
+  it('hiểu dòng R|0 (tài khoản bị tắt từ xa) và hiện trạng thái trên biểu đồ', () => {
+    expect(src).toContain('"R|0"')
+    expect(src).toContain('g_remoteOff')
   })
   it('chỉ gửi cfg không chứa địa chỉ Gateway/Terminal ID', () => {
     const fn = src.slice(src.indexOf('string BuildCfg()'), src.indexOf('return s;', src.indexOf('string BuildCfg()')))

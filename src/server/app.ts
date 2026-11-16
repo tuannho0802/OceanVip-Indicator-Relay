@@ -4,6 +4,7 @@ import path from 'node:path'
 import { SKEW_SEC, type WireSignal, safeEqual, sameSecret, signBody, signSignal } from '../shared/hmac'
 import { MAKEUP_RESEND_SEC, isIncompleteResult, makeupWindow, sanitizeOrders, sanitizeSetup } from '../shared/makeup'
 import { dedupeKey, parseAlert, riskReward } from '../shared/parse'
+import { LOGIN_RE, type AccountReport, type SwitchItem, sanitizeSwitchItem } from '../shared/switch'
 import { APP_VERSION, type ServerConfig } from './config'
 import { type PurgeSpec, type SignalRow, Store } from './db'
 import { type Logger, nullLogger } from './log'
@@ -99,6 +100,10 @@ export type AppDeps = {
   workerStatus?: () => { lastPollOk: number; lastError: string; pulled: number }
   /** Trang Cài đặt (đổi mã kết nối, tài khoản... ngay trên giao diện). Không có thì các đường /api/setup trả 404. */
   setup?: SetupController
+  /** Lần đầu thấy một tài khoản MT: để báo ngay cho Worker (không đợi nhịp kéo kế tiếp). */
+  onNewAccount?: (login: string) => void
+  /** Worker vừa đẩy một lệnh bật/tắt đã được áp: xác nhận lại cho Worker ngay. */
+  onSwitched?: () => void
 }
 
 export type App = {
@@ -106,6 +111,10 @@ export type App = {
   store: Store
   /** Đưa một tín hiệu do Worker chuyển (đường push hoặc kéo bù) vào Server. */
   ingestFromWorker: (item: WorkerItem) => IngestResult
+  /** Áp các lệnh bật/tắt tài khoản MT do Worker gửi (kéo bù). Trả true nếu có thay đổi. */
+  applySwitches: (items: SwitchItem[]) => boolean
+  /** Danh sách tài khoản MT + công tắc đang áp dụng, để báo lên Worker. */
+  accountReports: () => AccountReport[]
   close: () => void
 }
 
@@ -154,6 +163,20 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
     const { r } = ingest(item.raw, now, { wid: item.wid, receivedAt: Math.max(0, now - Math.floor(item.age)) })
     return 'duplicateOf' in r ? 'dup' : 'new'
   }
+
+  const applySwitches = (items: SwitchItem[]): boolean => {
+    const now = clock()
+    let changed = false
+    for (const it of items) {
+      if (cfg.accounts.length > 0 && !cfg.accounts.includes(it.login)) continue
+      if (store.applySwitch(it, now)) {
+        changed = true
+        log.info(`công tắc từ xa: tài khoản ${it.login} -> ${it.enabled ? 'BẬT' : 'TẮT'} (rev ${it.rev})`)
+      }
+    }
+    return changed
+  }
+  const accountReports = (): AccountReport[] => store.accountReports(cfg.accounts)
 
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? '/', 'http://x')
@@ -228,6 +251,34 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
       return json(res, 200, { ok: true, now, skew: now - ts })
     }
 
+    // 2c) Worker bật/tắt một tài khoản MT: cùng chữ ký như /api/ingest, thân JSON {login, enabled, rev, at}.
+    // Tắt = ngừng giao tín hiệu cho tài khoản đó; lệnh đang mở vẫn do EA tự quản lý.
+    if (p === '/api/switch' && req.method === 'POST') {
+      if (!cfg.syncKey) return json(res, 503, { error: 'worker_disabled' })
+      if (throttled()) return json(res, 429, { error: 'too_many_attempts' })
+      let body: string
+      try {
+        body = await readBody(req, 2048)
+      } catch {
+        return json(res, 413, { error: 'too_large' })
+      }
+      const ts = Number(req.headers['x-ocean-ts'])
+      const sig = String(req.headers['x-ocean-sig'] ?? '')
+      if (!Number.isInteger(ts) || Math.abs(now - ts) > SKEW_SEC) return reject(401, 'bad_time', 'switch')
+      if (!safeEqual(sig, await signBody(cfg.syncKey, ts, body))) return reject(401, 'bad_sig', 'switch')
+      let item: SwitchItem | null
+      try {
+        item = sanitizeSwitchItem(JSON.parse(body))
+      } catch {
+        return json(res, 400, { error: 'bad_json' })
+      }
+      if (!item) return json(res, 400, { error: 'bad_item' })
+      if (cfg.accounts.length > 0 && !cfg.accounts.includes(item.login)) return json(res, 403, { error: 'account_not_allowed' })
+      const changed = applySwitches([item])
+      if (changed) deps.onSwitched?.()
+      return json(res, 200, { ok: true, changed, rev: store.getSwitch(item.login)?.rev ?? 0 })
+    }
+
     // 3) Gateway (EA): ping + nhận tín hiệu. Khóa EA để biết đúng là EA của mình; tín hiệu giao xuống có chữ ký.
     if (p === '/api/gw/ping' && req.method === 'POST') {
       if (throttled()) return json(res, 429, { error: 'too_many_attempts' })
@@ -261,10 +312,12 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
               profit: numOrNull(x.profit),
             }))
         : []
+      const loginStr = str(b.login, 32)
+      const newAccount = loginStr !== undefined && LOGIN_RE.test(loginStr) && !store.hasLogin(loginStr)
       const t = store.upsertTerminal({
         tid,
         now,
-        login: str(b.login, 32),
+        login: loginStr,
         server: str(b.server, 64),
         balance: num(b.balance),
         equity: num(b.equity),
@@ -281,13 +334,27 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
           if (typeof a.id === 'number' && Number.isInteger(a.id)) store.ack(tid, a.id, String(a.result ?? 'ok'), now)
         }
       }
-      const rows = store.pending(tid, t.cursor, now - cfg.maxAgeSec, 10)
+      if (newAccount && loginStr) deps.onNewAccount?.(loginStr)
+      // Công tắc từ xa (Worker): tài khoản TẮT thì không nhận tín hiệu nào; BẬT lại thì chỉ nhận tín hiệu đến từ lúc bật (không bắn bù
+      // các tín hiệu đến trong lúc tắt). Tín hiệu bị chặn được ghi kết quả `remote_off` để không bao giờ giao lại (kể cả bù lệnh).
+      const sw = store.getSwitch(t.login)
+      const off = sw !== undefined && sw.enabled === 0
+      const since = sw !== undefined && sw.enabled === 1 ? sw.since : 0
+      let rows = store.pending(tid, t.cursor, now - cfg.maxAgeSec, 10)
+      if (off || since > 0) {
+        const keep: SignalRow[] = []
+        for (const r of rows) {
+          if (off || r.received_at < since) store.ack(tid, r.id, 'remote_off', now)
+          else keep.push(r)
+        }
+        rows = keep
+      }
       // Bù lệnh: EA bật bù (khai trong setup) thì giao lại tín hiệu còn dở, kể cả đã quá hạn bình thường, trong cửa sổ N giây của EA.
-      const mk = makeupWindow(parseSetup(t.setup))
+      const mk = off ? 0 : makeupWindow(parseSetup(t.setup))
       if (mk > 0 && rows.length < 10) {
         const extra = store.makeupCandidates(tid, t.cursor, now, {
           makeupSec: mk, maxAgeSec: cfg.maxAgeSec, resendSec: MAKEUP_RESEND_SEC, isIncomplete: isIncompleteResult, limit: 10 - rows.length,
-        })
+        }).filter((x) => x.received_at >= since)
         if (extra.length > 0) log.info(`bù lệnh: giao lại ${extra.length} tín hiệu còn dở cho ${tid} (#${extra.map((x) => x.id).join(', #')})`)
         rows.push(...extra)
       }
@@ -301,7 +368,8 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
         }),
       )
       // Kèm cấu hình người dùng đặt trên trang Cài đặt: Gateway áp dụng ngay, không phải sửa gateway.env hay chạy lại.
-      return json(res, 200, { now, signals, config: { tfs: cfg.tfs, symbolMap: cfg.symbolMap } })
+      // `remote: false` = tài khoản đang bị TẮT từ xa: Gateway báo cho EA (EA mới hiện lên biểu đồ; EA cũ bỏ qua).
+      return json(res, 200, { now, signals, remote: !off, config: { tfs: cfg.tfs, symbolMap: cfg.symbolMap } })
     }
 
     // 3b) Gateway hỏi cấu hình (cổng Gateway, khung giờ, ánh xạ symbol) và báo cổng đang nghe thật + lỗi. Nhờ vậy đổi cổng trên
@@ -335,6 +403,8 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
         setup: parseSetup(t.setup),
         orders: JSON.parse(t.orders || '[]') as unknown,
         online: now - t.last_seen <= ONLINE_SEC,
+        // false = tài khoản đang bị TẮT từ xa (Worker): không nhận tín hiệu mới.
+        remote: store.getSwitch(t.login)?.enabled !== 0,
       }))
       const view = (s: SignalRow) => ({
         id: s.id, received_at: s.received_at, kind: s.kind, side: s.side, symbol: s.symbol, tf: s.tf,
@@ -455,5 +525,5 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
       else res.end()
     })
   })
-  return { server, store, ingestFromWorker, close: () => { server.close(); store.db.close() } }
+  return { server, store, ingestFromWorker, applySwitches, accountReports, close: () => { server.close(); store.db.close() } }
 }

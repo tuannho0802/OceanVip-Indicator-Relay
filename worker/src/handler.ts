@@ -1,7 +1,8 @@
 import { SERVER_ID_RE } from '../../src/shared/connect'
 import { sameSecret } from '../../src/shared/hmac'
 import { appRoute, ensureAdmin } from './app'
-import { broadcastTargets, hookTargets, lockedAmong, normalizeOrigin, pollHint, serverKey, storeAndDeliver } from './deliver'
+import { FAST_POLL_SEC, broadcastTargets, hookTargets, lockedAmong, normalizeOrigin, pollHint, serverKey, storeAndDeliver } from './deliver'
+import { pendingSwitches, reportAccounts } from './ea'
 import { json } from './http'
 import { appPage, helpPage } from './ui'
 
@@ -145,7 +146,7 @@ async function route(req: Request, env: Env, ctx: Ctx, deps: Deps): Promise<Resp
   }
 
   // 2) Server ↔ Worker: header x-ocean-server = Server ID, Bearer = khóa riêng của Server đó (suy ra từ SYNC_KEY gốc).
-  if (p === '/api/pull' || p === '/api/ack' || p === '/api/tunnel') {
+  if (p === '/api/pull' || p === '/api/ack' || p === '/api/tunnel' || p === '/api/accounts') {
     if (!env.SYNC_KEY) return json(503, { error: 'sync_disabled' })
     const server = (req.headers.get('x-ocean-server') ?? '').trim().toLowerCase()
     if (server !== '' && !SERVER_ID_RE.test(server)) return json(400, { error: 'bad_server_id' })
@@ -168,8 +169,10 @@ async function route(req: Request, env: Env, ctx: Ctx, deps: Deps): Promise<Resp
       // và gợi ý nhịp kéo dày hơn khi đường đẩy đang hụt.
       const known = await env.DB.prepare('SELECT url FROM servers WHERE id = ?').bind(server).first<{ url: string | null }>()
       const url = normalizeOrigin(known?.url) ?? null
-      const poll = await pollHint(env, server, url, now)
-      return json(200, { now, tunnel: url, ...(poll !== null ? { poll } : {}), items: rows.map((r) => ({ wid: r.id, age: Math.max(0, now - r.created), raw: r.raw })) })
+      // Công tắc bật/tắt tài khoản MT mà đường đẩy trực tiếp chưa tới được VPS: gửi kèm để VPS áp (và báo lại qua /api/accounts), kéo dày trong lúc chờ.
+      const switches = await pendingSwitches(env, server)
+      const poll = (await pollHint(env, server, url, now)) ?? (switches.some((x) => now - x.at < 900) ? FAST_POLL_SEC : null)
+      return json(200, { now, tunnel: url, ...(poll !== null ? { poll } : {}), ...(switches.length > 0 ? { switches } : {}), items: rows.map((r) => ({ wid: r.id, age: Math.max(0, now - r.created), raw: r.raw })) })
     }
 
     if (p === '/api/ack' && req.method === 'POST') {
@@ -182,6 +185,19 @@ async function route(req: Request, env: Env, ctx: Ctx, deps: Deps): Promise<Resp
       const list = Array.isArray(ids) ? ids.filter((x): x is number => Number.isInteger(x) && x > 0).slice(0, 100) : []
       for (const id of list) await env.DB.prepare('UPDATE deliveries SET pushed = 1 WHERE sid = ? AND server = ?').bind(id, server).run()
       return json(200, { ok: true, acked: list.length })
+    }
+
+    // VPS báo danh sách tài khoản MT + công tắc đang áp dụng (để Admin cấp quyền, người dùng thấy đúng tài khoản được cấp).
+    if (p === '/api/accounts' && req.method === 'POST') {
+      const raw = await req.text()
+      if (raw.length > 16 * 1024) return json(413, { error: 'too_large' })
+      let b: unknown
+      try {
+        b = JSON.parse(raw)
+      } catch {
+        return json(400, { error: 'bad_json' })
+      }
+      return reportAccounts(env, server, b, now)
     }
 
     if (p === '/api/tunnel' && req.method === 'POST') {

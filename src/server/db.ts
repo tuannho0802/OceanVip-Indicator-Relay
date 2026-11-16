@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite'
+import { LOGIN_RE, MAX_ACCOUNTS, type AccountReport, type SwitchItem } from '../shared/switch'
 import type { Parsed } from '../shared/parse'
 
 // Vite (Vitest) bỏ tiền tố `node:` của sqlite nên nạp qua require.
@@ -47,6 +48,17 @@ export type TerminalRow = {
 
 export type DeliveryRow = { signal_id: number; tid: string; result: string; at: number }
 
+/** Công tắc bật/tắt từ xa của một tài khoản MT (không có dòng = BẬT như trước đây). */
+export type SwitchRow = {
+  login: string
+  enabled: number
+  /** Số phiên bản do Worker cấp; chỉ nhận lệnh có rev mới hơn. */
+  rev: number
+  /** Giờ (theo Worker) trạng thái hiện tại bắt đầu: tín hiệu đến trước mốc này không giao cho tài khoản đang BẬT. */
+  since: number
+  updated: number
+}
+
 /** Yêu cầu xóa tín hiệu: cũ hơn N ngày, hoặc tất cả tín hiệu đã xong. */
 export type PurgeSpec = { kind: 'older'; days: number } | { kind: 'all' }
 export type PurgeResult = { deleted: number; kept_fresh: number }
@@ -83,6 +95,14 @@ const MIGRATIONS: string[] = [
   // 3: EA báo cấu hình (input) và lệnh chờ để giao diện hiện Setup của terminal; Server dùng cấu hình để quyết định bù lệnh
   `ALTER TABLE terminals ADD COLUMN setup TEXT;
    ALTER TABLE terminals ADD COLUMN orders TEXT NOT NULL DEFAULT '[]';`,
+  // 4: công tắc bật/tắt từ xa theo tài khoản MT (Worker điều khiển; không có dòng = BẬT)
+  `CREATE TABLE switches (
+     login TEXT PRIMARY KEY,
+     enabled INTEGER NOT NULL DEFAULT 1,
+     rev INTEGER NOT NULL DEFAULT 0,
+     since INTEGER NOT NULL DEFAULT 0,
+     updated INTEGER NOT NULL DEFAULT 0
+   );`,
 ]
 
 export class Store {
@@ -271,6 +291,46 @@ export class Store {
       const due = d_result === null ? age > p.maxAgeSec : p.isIncomplete(d_result) && now - (d_at ?? 0) >= p.resendSec
       if (due) out.push(sig as SignalRow)
       if (out.length >= p.limit) break
+    }
+    return out
+  }
+
+  /** Công tắc của một tài khoản (undefined = chưa ai đặt = BẬT). */
+  getSwitch(login: string | null | undefined): SwitchRow | undefined {
+    if (!login || !LOGIN_RE.test(login)) return undefined
+    return this.db.prepare('SELECT * FROM switches WHERE login = ?').get(login) as SwitchRow | undefined
+  }
+
+  /** Áp một lệnh công tắc từ Worker. Chỉ nhận khi `rev` mới hơn bản đang có. Trả true nếu có thay đổi. */
+  applySwitch(it: SwitchItem, now: number): boolean {
+    const ex = this.getSwitch(it.login)
+    if (ex && it.rev <= ex.rev) return false
+    this.db
+      .prepare(
+        `INSERT INTO switches (login, enabled, rev, since, updated) VALUES (?,?,?,?,?)
+         ON CONFLICT(login) DO UPDATE SET enabled = excluded.enabled, rev = excluded.rev, since = excluded.since, updated = excluded.updated`,
+      )
+      .run(it.login, it.enabled ? 1 : 0, it.rev, it.at, now)
+    return true
+  }
+
+  /** Đã từng thấy tài khoản này chưa (để biết lúc nào cần báo Worker có tài khoản mới). */
+  hasLogin(login: string): boolean {
+    return this.db.prepare('SELECT 1 AS x FROM terminals WHERE login = ? LIMIT 1').get(login) !== undefined
+  }
+
+  /** Danh sách tài khoản MT (mới thấy gần nhất trước) kèm công tắc hiện có, để báo lên Worker. `allowed` rỗng = không lọc. */
+  accountReports(allowed: string[]): AccountReport[] {
+    const rows = this.db
+      .prepare('SELECT login, MAX(server) AS broker FROM terminals WHERE login IS NOT NULL GROUP BY login ORDER BY MAX(last_seen) DESC')
+      .all() as { login: string; broker: string | null }[]
+    const out: AccountReport[] = []
+    for (const r of rows) {
+      if (out.length >= MAX_ACCOUNTS) break
+      if (!LOGIN_RE.test(r.login)) continue
+      if (allowed.length > 0 && !allowed.includes(r.login)) continue
+      const sw = this.getSwitch(r.login)
+      out.push({ login: r.login, broker: r.broker, enabled: sw ? sw.enabled === 1 : true, rev: sw?.rev ?? 0 })
     }
     return out
   }

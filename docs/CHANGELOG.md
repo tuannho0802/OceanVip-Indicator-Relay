@@ -1,6 +1,14 @@
 # Lịch sử thay đổi
 
-## Server (chưa phát hành) · EA OceanRelay MT5 0.4.0 · MT4 0.3.0
+## Server (chưa phát hành) · EA OceanRelay MT5 0.5.0 · MT4 0.4.0
+**Bật/tắt EA từ xa theo tài khoản MT + cấp quyền cho người dùng khác**
+- Tab **Bật/tắt EA** trên Worker: mỗi VPS liệt kê các tài khoản MT4/MT5 (chỉ số tài khoản + tên sàn, không theo dõi số dư/lệnh) với nút Bật/Tắt. TẮT = Server ngừng giao tín hiệu cho tài khoản đó (EA không phải sửa logic); tín hiệu đến lúc tắt bị bỏ (ack `remote_off`), bật lại **không bắn bù**. Lệnh đang mở vẫn do EA tự quản lý.
+- Phân quyền: Admin thấy tất cả và là người duy nhất cấp quyền; chủ VPS bật/tắt mọi tài khoản trên VPS của mình; **người được cấp** chỉ thấy VPS được cấp và đúng những tài khoản được tick (VPS có 3 tài khoản, cấp 2 → họ chỉ thấy 2, không biết có tài khoản thứ 3). Tài khoản ngoài quyền trả `no_account` như chưa từng tồn tại.
+- Worker giữ trạng thái (migration `0004_ea_access.sql`: `accounts`, `server_access`, `account_grants`), đổi công tắc = `rev + 1` rồi đẩy `POST <tunnel>/api/switch` (ký HMAC như `/api/ingest`); hụt thì Server nhận kèm `switches` trong `/api/pull` (kéo dày 30 giây) và báo lại qua `POST /api/accounts` (`applied_rev`). Tab hiện "Đang chờ VPS áp dụng" tới khi xác nhận.
+- Server (migration v4 `switches`): chỉ nhận lệnh có `rev` mới hơn; mốc `at` do Worker đặt nên tín hiệu đến sau lúc Worker bật vẫn được giao dù lệnh đến VPS muộn. Server báo tài khoản MT mới lên Worker ngay lần đầu thấy.
+- Gateway thêm dòng `R|0` vào phản hồi ping khi tài khoản bị tắt. **EA MT5 0.5.0 / MT4 0.4.0** hiện "NHAN TIN HIEU: TAT TU XA" trên biểu đồ; EA đời cũ vẫn chạy bình thường (bỏ qua dòng `R|0`, và Server đã chặn tín hiệu rồi).
+- Cần cập nhật Server (bộ cài) + Worker (deploy, áp migration 0004). EA nâng cấp là tùy chọn (chỉ để hiện trạng thái).
+
 **Bù lệnh (EA MT5 + MT4, mặc định TẮT: `InpMakeupEnable`)**
 - Chân TP1/TP2/TP3 còn thiếu (sàn/terminal lỗi hoặc không phản hồi, hết thời gian thử lại, giá đã đi xa Entry quá sai số, tín hiệu đến trễ) thì EA **đặt bù lệnh chờ Limit/Stop tại Entry** của Signal, đúng SL/TP/comment của chân đó. Mua: Entry < Ask → Buy Limit, Entry > Ask → Buy Stop; bán đối xứng. Giá đang sát Entry (trong sai số) thì vào thị trường như thường.
 - Hạn thứ hai `InpMakeupExpirySec` (N giây, mặc định 300, tối đa 1800): tín hiệu đã quá `InpMaxAgeSec` nhưng chưa quá N giây vẫn được bù; lệnh chờ tự hủy sau N giây kể từ lúc tín hiệu phát ra (hạn của sàn + EA tự hủy dự phòng).

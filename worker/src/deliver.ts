@@ -1,5 +1,6 @@
 import { deriveServerKey } from '../../src/shared/connect'
 import { signBody } from '../../src/shared/hmac'
+import type { SwitchItem } from '../../src/shared/switch'
 import type { Ctx, Env } from './handler'
 
 /** Lưu tín hiệu vào hàng đợi D1 rồi đẩy về các VPS được giao. Dùng chung cho webhook thật và nút "Gửi thử". */
@@ -204,6 +205,45 @@ export async function flushPending(env: Env, fetchFn: typeof fetch, now: number,
     ).results
     const done = await Promise.all(rows.map((r) => push(env, r.server, r.sid, r.created, r.raw, now, fetchFn, retryMs)))
     return done.filter((d) => d?.ok).length
+}
+
+/** Kết quả một lần đẩy công tắc bật/tắt xuống VPS. */
+export type SwitchPush = { ok: boolean; status: number | null; error: string | null }
+/** Đẩy công tắc là thao tác người dùng đang chờ trên màn hình: chờ tối đa chừng này (ms), không thử lại (VPS sẽ kéo bù nếu hụt). */
+export const SWITCH_TIMEOUT_MS = 4000
+
+/**
+ * Đẩy một lệnh bật/tắt tài khoản MT xuống VPS (`POST <tunnel>/api/switch`, ký HMAC như `/api/ingest`). Một lần, không thử lại:
+ * hụt thì trạng thái vẫn nằm ở D1 (`rev > applied_rev`) và VPS nhận được ở lần kéo kế tiếp (Worker gợi ý kéo dày trong lúc đó).
+ */
+export async function pushSwitch(env: Env, server: string, item: SwitchItem, now: number, fetchFn: typeof fetch): Promise<SwitchPush> {
+    if (!env.SYNC_KEY) return { ok: false, status: null, error: 'sync_disabled' }
+    const origin = await serverOrigin(env, server)
+    if (!origin) return { ok: false, status: null, error: 'no_url' }
+    const key = await serverKey(env, server)
+    const body = JSON.stringify(item)
+    try {
+        const res = await fetchFn(`${origin}/api/switch`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-ocean-ts': String(now), 'x-ocean-sig': await signBody(key, now, body) },
+            body,
+            signal: AbortSignal.timeout(SWITCH_TIMEOUT_MS),
+        })
+        if (res.ok) {
+            await res.body?.cancel()
+            return { ok: true, status: res.status, error: null }
+        }
+        let error = `http_${res.status}`
+        try {
+            const j = JSON.parse((await res.text()).slice(0, 400)) as { error?: unknown }
+            if (typeof j.error === 'string' && /^[a-z_]{2,40}$/.test(j.error)) error = j.error
+        } catch {
+            /* không phải JSON: giữ mã HTTP */
+        }
+        return { ok: false, status: res.status, error }
+    } catch (e) {
+        return { ok: false, status: null, error: (e as Error)?.name === 'TimeoutError' ? 'timeout' : 'network' }
+    }
 }
 
 export type ProbeSample = { ms: number | null; status: number | null; error: string | null }
