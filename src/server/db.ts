@@ -105,6 +105,9 @@ const MIGRATIONS: string[] = [
    );`,
 ]
 
+/** Phiên bản schema hiện tại = số migration. Test dùng hằng này để khỏi phải sửa tay mỗi lần thêm migration. */
+export const SCHEMA_VERSION = MIGRATIONS.length
+
 export class Store {
   readonly db: DatabaseSyncType
   constructor(file: string) {

@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { JSDOM } from 'jsdom'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Gateway } from '../src/gateway/gateway'
-import { Store } from '../src/server/db'
+import { SCHEMA_VERSION, Store } from '../src/server/db'
 import { type App, createApp } from '../src/server/app'
 import { MAX_MAKEUP_SEC, isIncompleteResult, makeupWindow, parseCfgLine, sanitizeOrders, sanitizeSetup } from '../src/shared/makeup'
 import { EA_KEY, WEBHOOK_KEY, baseCfg } from './helpers'
@@ -268,6 +268,7 @@ describe('nâng cấp DB từ phiên bản cũ (v2)', () => {
   it('thêm cột setup/orders, giữ terminal cũ (setup null, orders rỗng)', () => {
     const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite')
     const dir = mkdtempSync(path.join(os.tmpdir(), 'ocean-mig-'))
+    let st: Store | undefined
     try {
       const f = path.join(dir, 'old.db')
       const old = new DatabaseSync(f)
@@ -278,15 +279,15 @@ describe('nâng cấp DB từ phiên bản cũ (v2)', () => {
         INSERT INTO terminals (tid, first_seen, last_seen, login) VALUES ('900001@Demo', 1, 2, '900001');
         PRAGMA user_version = 2;`)
       old.close()
-      const st = new Store(f)
-      expect((st.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(3)
+      st = new Store(f)
+      expect((st.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(SCHEMA_VERSION)
       const t = st.terminals()[0]
       expect(t?.login).toBe('900001')
       expect(t?.setup).toBeNull()
       expect(t?.orders).toBe('[]')
-      st.db.close()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      try { st?.db.close() } catch { /* đã đóng */ }
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 })

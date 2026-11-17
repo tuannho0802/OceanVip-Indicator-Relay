@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Gateway, loadGatewayConfig } from '../src/gateway/gateway'
 import { type App, createApp } from '../src/server/app'
 import { ConfigError, loadConfig } from '../src/server/config'
-import { Store } from '../src/server/db'
+import { SCHEMA_VERSION, Store } from '../src/server/db'
 import { EA_KEY, WEBHOOK_KEY, baseCfg } from './helpers'
 
 const SELL =
@@ -142,17 +142,18 @@ describe('cấu hình', () => {
 describe('cơ sở dữ liệu', () => {
     it('mở lại cùng một tệp: migration không chạy lại, dữ liệu còn nguyên', () => {
         const dir = mkdtempSync(path.join(os.tmpdir(), 'ocean-db-'))
+        let b: Store | undefined
         try {
             const f = path.join(dir, 'a.db')
             const a = new Store(f)
             a.setMeta('x', '1')
             a.db.close()
-            const b = new Store(f)
+            b = new Store(f)
             expect(b.getMeta('x')).toBe('1')
-            expect((b.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(3)
-            b.db.close()
+            expect((b.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(SCHEMA_VERSION)
         } finally {
-            rmSync(dir, { recursive: true, force: true })
+            try { b?.db.close() } catch { /* đã đóng */ }
+            rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
         }
     })
 })
