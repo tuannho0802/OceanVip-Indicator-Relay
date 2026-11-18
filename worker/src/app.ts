@@ -181,6 +181,13 @@ async function overview(env: Env, u: UserRow, workerUrl: string, now: number): P
           '(SELECT COUNT(*) FROM servers WHERE owner = users.id) AS servers, (SELECT COUNT(*) FROM hooks WHERE owner = users.id) AS hooks FROM users ORDER BY id',
       ).all<UserRow & { servers: number; hooks: number }>()
     ).results
+    // Mỗi VPS đang chia sẻ quyền bật/tắt EA cho ai và bao nhiêu tài khoản MT (để Admin nhìn thấy ngay ở tab Kết nối).
+    const shared = (
+      await env.DB.prepare('SELECT x.server, u.username, (SELECT COUNT(*) FROM account_grants g WHERE g.user_id = x.user_id AND g.server = x.server) AS n FROM server_access x JOIN users u ON u.id = x.user_id ORDER BY u.username').all<{ server: string; username: string; n: number }>()
+    ).results
+    for (const sv of body.servers as { id: string; shared_with?: { username: string; accounts: number }[] }[]) {
+      sv.shared_with = shared.filter((x) => x.server === sv.id).map((x) => ({ username: x.username, accounts: x.n }))
+    }
     body.users = users.map((x) => ({ ...pub(x), locked: x.locked === 1, servers: x.servers, hooks: x.hooks, last_login_ago: x.last_login === 0 ? null : Math.max(0, now - x.last_login) }))
   }
   return json(200, body)

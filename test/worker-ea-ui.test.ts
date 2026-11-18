@@ -60,7 +60,7 @@ async function open(env: Env) {
   return { doc, text, until, form, submit, fill, tab, tick, signIn, boxes }
 }
 
-async function seed() {
+async function seed(opts: { ownVps?: boolean } = {}) {
   const env: Env & { DB: ReturnType<typeof fakeD1> } = { DB: fakeD1(readFileSync('worker/schema.sql', 'utf8')), WEBHOOK_KEY, SYNC_KEY, ADMIN_PASSWORD: 'admin-initial-pass' }
   const ctx = { waitUntil: (_p: Promise<unknown>) => {} }
   const api = async (method: string, path: string, body?: unknown, cookie = '') => {
@@ -75,6 +75,7 @@ async function seed() {
   const tmp = created.j.password as string
   const uc = cookieOf((await api('POST', '/api/login', { username: 'nam', password: tmp })).r)
   await api('POST', '/api/password', { current: tmp, next: 'nam-new-pass-1' }, uc)
+  if (opts.ownVps) await api('POST', '/api/servers', { user_id: created.j.id, name: 'VPS của nam' }, admin) // User này tự có VPS riêng (chưa kết nối)
   const key = await deriveServerKey(SYNC_KEY, VPS)
   const rep = await handle(
     new Request(`${WORKER}/api/accounts`, {
@@ -150,5 +151,33 @@ describe('giao diện: Admin giới hạn User chỉ thấy 2/3 tài khoản MT'
     await u.until(() => u.text().includes('ĐANG TẮT'), 'tài khoản chuyển sang tắt')
     expect(((await env.DB.prepare("SELECT enabled FROM accounts WHERE login = '6128952'").first()) as any).enabled).toBe(0)
     expect(((await env.DB.prepare("SELECT enabled FROM accounts WHERE login = '8039504'").first()) as any).enabled).toBe(1)
+  })
+
+  it('VPS có sẵn của Admin (không có chủ): bấm "Chia sẻ" ở tab Kết nối → cấp 2/3 cho User đã có VPS riêng; User thấy cả hai nhưng chỉ 2 tài khoản được chia sẻ', async () => {
+    const env = await seed({ ownVps: true })
+    const a = await open(env)
+    await a.signIn('admin', 'admin-real-pass-9')
+    await a.until(() => a.text().includes('bot-a21-cabc'), 'tab Kết nối')
+    const card = () => a.doc.querySelector(`[data-server="${VPS}"]`) as HTMLElement
+    expect(card().textContent).toContain('Chưa chia sẻ quyền bật/tắt EA cho ai')
+    ;(card().querySelector('[data-act="shareEa"]') as HTMLElement).click()
+    await a.until(() => !!a.form('eaGrantAdd'), 'nhảy sang form cấp quyền')
+    expect((a.form('eaGrantAdd').getAttribute('data-server'))).toBe(VPS) // đúng VPS vừa bấm, không phải VPS của User
+    for (const c of a.boxes('form[data-form="eaGrantAdd"] input[name="login"]')) if (c.value !== '8039504') c.checked = true
+    a.submit(a.form('eaGrantAdd'))
+    await a.until(() => a.text().includes('Thấy 2/3 tài khoản'), 'đã cấp 2/3')
+
+    a.tab('conn')
+    await a.until(() => (card()?.textContent ?? '').includes('nam (2 tài khoản)'), 'tab Kết nối hiện đã chia sẻ cho ai')
+
+    const u = await open(env)
+    await u.signIn('nam', 'nam-new-pass-1')
+    await u.until(() => u.text().includes('VPS của nam'), 'User thấy VPS riêng ở tab Kết nối')
+    expect(u.text()).not.toContain('bot-a21-cabc') // VPS được chia sẻ không lộ ở tab Kết nối (không phải VPS của họ)
+    expect(u.doc.querySelector('[data-act="shareEa"]')).toBeNull()
+    u.tab('ea')
+    await u.until(() => u.text().includes('#6128952'), 'User thấy tài khoản được chia sẻ')
+    expect(u.text()).toContain('#8033273')
+    expect(u.text()).not.toContain('8039504')
   })
 })

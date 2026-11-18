@@ -285,9 +285,11 @@ const CLIENT_JS = String.raw`
         h('span', { class: 'muted grow', text: (admin && s.owner_name ? 'Chủ: ' + s.owner_name + ' · ' : '') + 'thấy lần cuối: ' + ago(s.seen_ago) }),
         s.id && !s.locked && !s.owner_locked ? h('button', { 'data-act': 'probeServer', 'data-id': s.id, disabled: S.probing[s.id] ? true : null, text: S.probing[s.id] ? 'Đang đo…' : 'Đo độ trễ' }) : null,
         s.id ? h('button', { 'data-act': 'getCode', 'data-id': s.id, text: 'Lấy mã kết nối' }) : null,
+        admin && s.id ? h('button', { 'data-act': 'shareEa', 'data-id': s.id, text: 'Chia sẻ bật/tắt EA' }) : null,
         admin && s.id ? h('button', { 'data-act': 'lockServer', 'data-id': s.id, 'data-v': s.locked ? '0' : '1', class: s.locked ? '' : 'dng', text: s.locked ? 'Mở khóa' : 'Khóa' }) : null,
         s.id ? h('button', { class: 'dng', 'data-act': 'delServer', 'data-id': s.id, text: 'Xóa' }) : null),
       h('div', { class: 'mono', text: s.id ? 'Server ID: ' + s.id : '' }),
+      admin && s.id && s.shared_with ? h('div', { class: 'muted', 'data-role': 'shared', text: s.shared_with.length === 0 ? 'Chưa chia sẻ quyền bật/tắt EA cho ai.' : 'Đã chia sẻ quyền bật/tắt EA: ' + s.shared_with.map(function (x) { return x.username + ' (' + x.accounts + ' tài khoản)' }).join(', ') }) : null,
       hint ? h('div', { class: s.status === 'stale' || s.locked || s.owner_locked ? 'warn' : 'note', text: hint }) : null,
       lastPushLine(s),
       s.id ? probeView(s.id) : null)
@@ -611,6 +613,17 @@ const CLIENT_JS = String.raw`
     purgeAll: function () {
       if (!window.confirm('Xóa HẾT tín hiệu' + (S.user.role === 'admin' ? ' của mọi người' : ' của bạn') + '? Không hoàn tác được.')) return
       doPurge({ mode: 'all' })
+    },
+    shareEa: function (t) {
+      var id = t.getAttribute('data-id')
+      S.tab = 'ea'
+      S.secret = null
+      loadEa().then(function () {
+        render()
+        var card = root.querySelector('[data-server="' + id + '"]')
+        if (card && card.scrollIntoView) card.scrollIntoView({ block: 'start' })
+      }).catch(fail)
+      render()
     },
     getCode: function (t) {
       var id = t.getAttribute('data-id')
