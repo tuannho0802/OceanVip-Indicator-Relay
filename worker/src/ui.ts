@@ -378,13 +378,16 @@ const CLIENT_JS = String.raw`
       h('button', { class: a.enabled ? 'dng' : 'pri', 'data-act': 'eaToggle', 'data-server': s.id, 'data-login': a.login, 'data-v': a.enabled ? '0' : '1', disabled: s.locked ? true : null, text: a.enabled ? 'Tắt' : 'Bật' }))
   }
   function eaAccessBox(s, d) {
+    var total = s.accounts.length
     var box = h('div', { style: 'margin-top:12px;border-top:1px solid #17394d;padding-top:10px' },
       h('div', { class: 'muted', text: 'Cấp quyền: người được cấp chỉ thấy và chỉ bật/tắt được những tài khoản MT bạn tick; tài khoản còn lại họ không thấy.' }))
     s.access.forEach(function (x) {
+      var n = x.logins.length
       add(box, h('div', { class: 'row', style: 'margin-top:8px' },
         h('b', { text: x.username }),
         x.locked ? h('span', { class: 'badge bad', text: 'Tài khoản bị khóa' }) : null,
-        s.accounts.length === 0 ? h('span', { class: 'muted', text: '(VPS chưa báo tài khoản MT nào để chọn)' }) : null,
+        total > 0 ? h('span', { class: 'badge ' + (n > 0 ? 'ok' : 'warn'), 'data-role': 'eaCount', text: n > 0 ? 'Thấy ' + n + '/' + total + ' tài khoản' : 'Chưa được chọn tài khoản nào' }) : null,
+        total === 0 ? h('span', { class: 'muted', text: '(VPS chưa báo tài khoản MT nào để chọn)' }) : null,
         s.accounts.map(function (a) {
           return h('label', { style: 'flex-direction:row;align-items:center;gap:5px;color:#e6f4f8' },
             h('input', { type: 'checkbox', 'data-change': 'eaGrant', 'data-server': s.id, 'data-user': x.user_id, 'data-login': a.login, checked: x.logins.indexOf(a.login) >= 0 ? true : null }),
@@ -396,10 +399,19 @@ const CLIENT_JS = String.raw`
     var has = {}
     s.access.forEach(function (x) { has[x.user_id] = true })
     var free = d.users.filter(function (u) { return !has[u.id] && u.username !== s.owner_name })
-    if (free.length > 0) {
-      add(box, h('form', { 'data-form': 'eaGrantAdd', 'data-server': s.id, class: 'row', style: 'margin-top:8px' },
+    if (free.length > 0 && total > 0) {
+      // Cấp MỘT BƯỚC: chọn người + tick luôn các tài khoản MT được thấy (phải chọn ít nhất 1).
+      add(box, h('form', { 'data-form': 'eaGrantAdd', 'data-server': s.id, class: 'row', style: 'margin-top:10px' },
         h('select', { name: 'user' }, free.map(function (u) { return h('option', { value: u.id, text: u.username }) })),
-        h('button', { type: 'submit', text: '+ Cấp VPS này cho người dùng' })))
+        s.accounts.map(function (a) {
+          return h('label', { style: 'flex-direction:row;align-items:center;gap:5px;color:#e6f4f8' },
+            h('input', { type: 'checkbox', name: 'login', value: a.login }), '#' + a.login)
+        }),
+        total > 1 ? h('button', { type: 'button', 'data-act': 'eaPickAll', text: 'Chọn tất cả' }) : null,
+        h('span', { class: 'grow' }),
+        h('button', { class: 'pri', type: 'submit', text: '+ Cấp cho người dùng' })))
+    } else if (free.length > 0) {
+      add(box, h('div', { class: 'muted', style: 'margin-top:6px', text: 'VPS chưa báo tài khoản MT nào nên chưa có gì để cấp. Cần Server bản mới trên VPS và EA đã chạy ít nhất một lần.' }))
     } else if (s.access.length === 0) {
       add(box, h('div', { class: 'muted', style: 'margin-top:6px', text: 'Chưa có người dùng nào để cấp (tạo tài khoản ở tab Người dùng).' }))
     }
@@ -561,7 +573,7 @@ const CLIENT_JS = String.raw`
       sec('Dùng tab “Bật/tắt EA”', ol([
         'Cần Server trên VPS bản mới (có bật/tắt từ xa) và EA đã chạy ít nhất một lần: tài khoản MT sẽ tự hiện trong tab này.',
         'Bấm Tắt: EA ngừng nhận tín hiệu mới nên không vào lệnh mới; lệnh đang mở vẫn do EA tự quản lý. Bấm Bật để nhận lại (tín hiệu đến lúc tắt không bắn bù).',
-        'Admin cấp quyền: ở thẻ VPS bấm “+ Cấp VPS này cho người dùng”, rồi tick đúng các tài khoản MT cho phép. Người đó chỉ thấy các tài khoản được tick.',
+        'Admin cấp quyền: ở thẻ VPS chọn người dùng, tick đúng các tài khoản MT cho phép (ví dụ 2/3 tài khoản) rồi bấm “+ Cấp cho người dùng”. Người đó chỉ thấy và bật/tắt được các tài khoản được tick; muốn đổi thì tick/bỏ tick ngay ở dòng của họ.',
         'Nếu hiện “Đang chờ VPS áp dụng”: tunnel đang rớt, VPS sẽ tự áp dụng khi liên lạc lại với Worker (thường trong vài chục giây).'
       ])),
       h('p', { class: 'muted' }, 'Hướng dẫn vận hành Worker dành cho Admin: ', h('a', { href: '/help', text: '/help' })))
@@ -670,6 +682,14 @@ const CLIENT_JS = String.raw`
         if (!r.applied) { [5000, 20000, 60000].forEach(function (ms) { setTimeout(function () { if (S.user && S.tab === 'ea') loadEa().then(render).catch(function () {}) }, ms) }) }
       })
     },
+    eaPickAll: function (t) {
+      var f = t.closest('form')
+      var boxes = f ? f.querySelectorAll('input[name="login"]') : []
+      var all = true
+      boxes.forEach(function (c) { if (!c.checked) all = false })
+      boxes.forEach(function (c) { c.checked = !all })
+      t.textContent = all ? 'Chọn tất cả' : 'Bỏ chọn hết'
+    },
     eaRevoke: function (t) {
       if (!window.confirm('Thu hồi mọi quyền của “' + t.getAttribute('data-name') + '” trên VPS này?')) return
       call('DELETE', '/api/ea/' + t.getAttribute('data-server') + '/access/' + t.getAttribute('data-user'), null, 'Đã thu hồi quyền').then(function (r) { if (r) loadEa().then(render).catch(fail) })
@@ -720,7 +740,10 @@ const CLIENT_JS = String.raw`
       })
     },
     eaGrantAdd: function (f) {
-      call('PUT', '/api/ea/' + f.getAttribute('data-server') + '/access/' + val(f, 'user'), { logins: [] }, 'Đã cấp VPS: hãy tick tài khoản MT mà người đó được phép dùng').then(function (r) { if (r) loadEa().then(render).catch(fail) })
+      var logins = []
+      f.querySelectorAll('input[name="login"]').forEach(function (c) { if (c.checked) logins.push(c.value) })
+      if (logins.length === 0) { toast('Hãy tick ít nhất một tài khoản MT để cấp cho người này', true); return }
+      call('PUT', '/api/ea/' + f.getAttribute('data-server') + '/access/' + val(f, 'user'), { logins: logins }, 'Đã cấp ' + logins.length + ' tài khoản MT').then(function (r) { if (r) loadEa().then(render).catch(fail) })
     },
     addServer: function (f) {
       call('POST', '/api/servers', { name: val(f, 'name') }).then(function (r) {
@@ -763,9 +786,13 @@ const CLIENT_JS = String.raw`
       var sid = el.getAttribute('data-server')
       var uid = el.getAttribute('data-user')
       var logins = []
+      var group = []
       root.querySelectorAll('input[data-change="eaGrant"]').forEach(function (c) {
-        if (c.getAttribute('data-server') === sid && c.getAttribute('data-user') === uid && c.checked) logins.push(c.getAttribute('data-login'))
+        if (c.getAttribute('data-server') !== sid || c.getAttribute('data-user') !== uid) return
+        group.push(c)
+        if (c.checked) logins.push(c.getAttribute('data-login'))
       })
+      group.forEach(function (c) { c.disabled = true })
       call('PUT', '/api/ea/' + sid + '/access/' + uid, { logins: logins }, 'Đã lưu danh sách tài khoản được cấp').then(function () { loadEa().then(render).catch(fail) })
       return
     }
