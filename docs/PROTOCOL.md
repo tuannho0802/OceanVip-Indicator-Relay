@@ -30,7 +30,7 @@ OCEAN VIP by Duong | BUY ENTRY | XAUUSD | M3 | Entry: 4094.540 | SL: 4088.700 | 
 | `GET /api/state`, `/api/info`, `/api/health`, tệp tĩnh | công khai | Giao diện. `/api/info` chỉ kèm `retention` (số tín hiệu đang lưu, số ngày giữ, lần dọn gần nhất) cho người xem từ chính VPS |
 
 ## EA ⇄ Gateway (`POST /v1/ping`, text `khóa=giá trị`)
-Gửi: `login, server, [tid], bal, eq, mg, fm, ver, pos=ticket,symbol,side,vol,open,sl,tp,profit;…, ord=ticket,symbol,type,vol,price,sl,tp,conLaiGiay;…, [cfg=khóa=giá trị;khóa=giá trị;…], acks=id:kết quả,…`. `ord` = lệnh chờ của EA (type: `buylimit|buystop|selllimit|sellstop`; có mặt nhưng rỗng = không có lệnh chờ; vắng = EA đời cũ, Server giữ bản cũ). `cfg` = các input của EA, EA mới gửi mỗi 10 nhịp (vắng = giữ bản đã lưu); Server dùng `InpAllowTrading`, `InpMakeupEnable`, `InpMakeupExpirySec` để quyết định giao bù, các khóa khác chỉ để hiển thị.
+Gửi: `login, server, [tid], bal, eq, mg, fm, ver, pos=ticket,symbol,side,vol,open,sl,tp,profit;…, ord=ticket,symbol,type,vol,price,sl,tp,conLaiGiay;…, [cfg=khóa=giá trị;khóa=giá trị;…], acks=id:kết quả,…`. `ord` = lệnh chờ của EA (type: `buylimit|buystop|selllimit|sellstop`; có mặt nhưng rỗng = không có lệnh chờ; vắng = EA đời cũ, Server giữ bản cũ). `cfg` = các input của EA, EA mới gửi mỗi 10 nhịp (vắng = giữ bản đã lưu); Server dùng `InpAllowTrading`, `InpMakeupEnable`, `InpMakeupExpirySec` để quyết định giao bù, các khóa khác chỉ để hiển thị. Khi `cfg` làm đổi phần input Worker thấy được (các khóa trong `REMOTE_PARAMS`) của một tài khoản đã biết, Server báo Worker ngay qua `POST /api/accounts` (gộp 1 giây) thay vì đợi nhịp kéo bù.
 Nhận: dòng đầu `OK`, tiếp theo:
 - `S|id|side|symbol|tf|entry|sl|tp1|tp2|tp3|ageSec`
 - `U|id|side|status|symbol|tf|entry|sl|tp|ageSec`

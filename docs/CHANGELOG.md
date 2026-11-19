@@ -2,6 +2,7 @@
 
 ## Server (chưa phát hành) · EA OceanRelay MT5 0.5.0 · MT4 0.4.0
 
+- **Báo Worker ngay khi EA đổi input tại chỗ.** Trước đây Server chỉ lưu `setup` mới (từ `cfg=`) mà không báo, nên Worker chỉ thấy ở nhịp kéo bù kế tiếp (mặc định `OCEAN_POLL_SEC` = 300 giây). Nay `/api/gw/ping` so sánh phần input Worker thấy được (đã lọc theo `REMOTE_PARAMS`) trước/sau khi lưu; khác thì gọi `notifyAccounts()` (gộp 1 giây, bỏ qua nếu nội dung không đổi) nên Worker thấy sau khoảng 20 giây (EA gửi `cfg=` mỗi 10 nhịp ping). Không đổi giao thức, không cần cập nhật Worker/EA; đổi riêng `InpMagic`/`InpComment` (Worker không thấy) không gây request. Test hồi quy trong `test/ea-params.test.ts`.
 - **Tuỳ chỉnh input EA từ xa** theo tài khoản MT (tab "Bật/tắt EA" → "Tuỳ chỉnh input"): Worker → Server → Gateway → EA (dòng `P|`), EA báo `prev=`; hiện trạng thái chờ VPS / chờ EA / đã áp. Danh sách input cho phép ở `src/shared/params.ts`. **EA MT5 0.6.0 / MT4 0.5.0**. Migration Worker `0005_ea_params.sql`, Server schema v5.
 **Bật/tắt EA từ xa theo tài khoản MT + cấp quyền cho người dùng khác**
 - Tab **Bật/tắt EA** trên Worker: mỗi VPS liệt kê các tài khoản MT4/MT5 (chỉ số tài khoản + tên sàn, không theo dõi số dư/lệnh) với nút Bật/Tắt. TẮT = Server ngừng giao tín hiệu cho tài khoản đó (EA không phải sửa logic); tín hiệu đến lúc tắt bị bỏ (ack `remote_off`), bật lại **không bắn bù**. Lệnh đang mở vẫn do EA tự quản lý.

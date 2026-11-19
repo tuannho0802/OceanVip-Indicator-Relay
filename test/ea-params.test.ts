@@ -238,3 +238,73 @@ describe('kéo bù: Worker gửi kèm params trong /api/pull', () => {
         expect(reports).toHaveLength(1) // lần đầu báo danh sách; lần hai không đổi nên không báo lại
     })
 })
+
+describe('EA đổi input tại chỗ: Server báo Worker ngay, không đợi nhịp kéo bù', () => {
+    it('setup (phần Worker thấy được) đổi thì gọi onParamsChanged đúng một lần', async () => {
+        await ping('111', { setup: { InpLotPerOrder: '0.10' } })
+        expect(changed).toBe(0) // lần đầu thấy tài khoản đã có onNewAccount lo, không tính là "đổi input"
+        await ping('111', { setup: { InpLotPerOrder: '0.50' } }) // người dùng đổi lot ngay trên EA
+        expect(changed).toBe(1)
+        expect(app.accountReports().find((r) => r.login === '111')?.setup).toEqual({ InpLotPerOrder: '0.50' })
+    })
+
+    it('EA gửi lại đúng setup cũ (cứ 10 nhịp một lần) thì không báo lặp', async () => {
+        await ping('111', { setup: { InpLotPerOrder: '0.10' } })
+        await ping('111', { setup: { InpLotPerOrder: '0.10' } })
+        await ping('111', { setup: { InpLotPerOrder: '0.10' } })
+        expect(changed).toBe(0)
+    })
+
+    it('ping không kèm setup (nhịp không gửi cfg) thì không báo', async () => {
+        await ping('111', { setup: { InpLotPerOrder: '0.10' } })
+        await ping('111')
+        expect(changed).toBe(0)
+    })
+
+    it('chỉ khóa Worker không thấy (InpMagic, InpComment) đổi thì không báo', async () => {
+        await ping('111', { setup: { InpLotPerOrder: '0.10', InpMagic: '1', InpComment: 'A' } })
+        await ping('111', { setup: { InpLotPerOrder: '0.10', InpMagic: '2', InpComment: 'B' } })
+        expect(changed).toBe(0)
+    })
+
+    it('khóa đổi ở tài khoản này không kéo theo báo cho tài khoản khác', async () => {
+        await ping('111', { setup: { InpLotPerOrder: '0.10' } })
+        await ping('222', { setup: { InpLotPerOrder: '0.10' } })
+        await ping('222', { setup: { InpLotPerOrder: '0.10' } })
+        expect(changed).toBe(0)
+        await ping('222', { setup: { InpLotPerOrder: '0.20' } })
+        expect(changed).toBe(1)
+    })
+
+    it('đầu-cuối: hook nối vào WorkerSync.notifyAccounts, Worker nhận /api/accounts mới trong ~1 giây (không cần pullOnce)', async () => {
+        app.close()
+        const posts: string[] = []
+        const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+            const u = String(url)
+            if (u.endsWith('/api/pull')) return new Response(JSON.stringify({ items: [] }), { status: 200 })
+            if (u.endsWith('/api/accounts')) posts.push(String(init?.body))
+            return new Response('{"ok":true}', { status: 200 })
+        }) as unknown as typeof fetch
+        let sync: WorkerSync | undefined
+        app = createApp(baseCfg({ syncKey: SYNC_KEY, serverId: 'nam-1' }), {
+            clock: () => now,
+            onNewAccount: () => sync?.notifyAccounts(),
+            onParamsChanged: () => sync?.notifyAccounts(),
+        })
+        await new Promise<void>((r) => app.server.listen(0, '127.0.0.1', r))
+        base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`
+        sync = new WorkerSync({ workerUrl: 'https://w.example', syncKey: 'k', serverId: 'nam-1', pollSec: 300, log: { info() { }, warn() { }, error() { }, debug() { } } as never, ingest: () => 'new', accounts: app.accountReports, fetchFn })
+        sync.start(false) // nhịp kéo bù đầu tiên cách 300 giây: mọi báo cáo dưới đây chỉ có thể do hook
+        try {
+            await ping('111', { setup: { InpLotPerOrder: '0.10' } })
+            await new Promise((r) => setTimeout(r, 1300))
+            posts.length = 0
+            await ping('111', { setup: { InpLotPerOrder: '0.50' } })
+            await new Promise((r) => setTimeout(r, 1300))
+            expect(posts).toHaveLength(1)
+            expect(JSON.parse(posts[0] as string).accounts[0].setup).toEqual({ InpLotPerOrder: '0.50' })
+        } finally {
+            sync.stop()
+        }
+    })
+})

@@ -360,6 +360,9 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
         : []
       const loginStr = str(b.login, 32)
       const newAccount = loginStr !== undefined && LOGIN_RE.test(loginStr) && !store.hasLogin(loginStr)
+      // Input EA người dùng đổi trực tiếp trên EA: so sánh phần Worker nhìn thấy (setupOf đã lọc theo REMOTE_PARAMS) trước và sau khi lưu.
+      const setupJson = sanitizeSetupJson(b.setup)
+      const setupBefore = setupJson !== undefined && loginStr !== undefined && LOGIN_RE.test(loginStr) && !newAccount ? JSON.stringify(store.setupOf(loginStr)) : null
       const t = store.upsertTerminal({
         tid,
         now,
@@ -372,7 +375,7 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
         ea_ver: str(b.ea_ver, 16),
         positions: Array.isArray(b.positions) ? JSON.stringify(positions) : undefined,
         // Cấu hình (input) và lệnh chờ của EA: EA đời cũ không gửi thì giữ nguyên giá trị đã lưu (COALESCE).
-        setup: sanitizeSetupJson(b.setup),
+        setup: setupJson,
         orders: Array.isArray(b.orders) ? JSON.stringify(sanitizeOrders(b.orders)) : undefined,
       })
       if (Array.isArray(b.acks)) {
@@ -381,6 +384,8 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
         }
       }
       if (newAccount && loginStr) deps.onNewAccount?.(loginStr)
+      // EA đổi input tại chỗ: báo Worker ngay (notifyAccounts gộp 1 giây, reportAccounts bỏ qua nếu nội dung không đổi) thay vì đợi nhịp kéo bù tới 300 giây.
+      else if (setupBefore !== null && loginStr !== undefined && JSON.stringify(store.setupOf(loginStr)) !== setupBefore) deps.onParamsChanged?.()
       // Input EA từ xa: EA báo `prev` = rev bộ ghi đè nó đang áp (0 = chưa áp gì / vừa khởi động lại). Server giao bộ ghi đè khi rev của Server
       // MỚI hơn `prev`, nên EA khởi động lại tự nhận lại, và EA đã áp rồi thì không nhận lặp.
       const prev = Number.isInteger(b.prev) && (b.prev as number) >= 0 && (b.prev as number) <= 2_000_000_000 ? (b.prev as number) : 0
