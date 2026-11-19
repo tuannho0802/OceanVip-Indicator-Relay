@@ -1,4 +1,5 @@
 import path from 'node:path'
+import type { ParamsItem } from '../shared/params'
 import type { AccountReport, SwitchItem } from '../shared/switch'
 import type { ServerConfig } from './config'
 import type { Logger } from './log'
@@ -12,6 +13,7 @@ export type RuntimeDeps = {
   ingest: (item: WorkerItem) => IngestResult
   /** Công tắc bật/tắt tài khoản MT từ Worker (kéo bù) và danh sách tài khoản báo lên Worker. */
   applySwitches?: (items: SwitchItem[]) => boolean
+  applyParams?: (items: ParamsItem[]) => boolean
   accounts?: () => AccountReport[]
   /** Chỉ để test: thay bộ gọi Worker / bộ tạo tunnel thật. */
   makeSync?: (o: ConstructorParameters<typeof WorkerSync>[0]) => WorkerSync
@@ -47,7 +49,7 @@ export class Runtime {
 
     let check: WorkerCheck | null = null
     if (cfg.workerUrl) {
-      const opts = { workerUrl: cfg.workerUrl, syncKey: cfg.syncKey, serverId: cfg.serverId, pollSec: cfg.pollSec, log: d.log, ingest: d.ingest, applySwitches: d.applySwitches, accounts: d.accounts, fetchFn: d.fetchFn }
+      const opts = { workerUrl: cfg.workerUrl, syncKey: cfg.syncKey, serverId: cfg.serverId, pollSec: cfg.pollSec, log: d.log, ingest: d.ingest, applySwitches: d.applySwitches, applyParams: d.applyParams, accounts: d.accounts, fetchFn: d.fetchFn }
       const sync = d.makeSync ? d.makeSync(opts) : new WorkerSync(opts)
       this.sync = sync
       if (cfg.publicUrl) sync.setPublicUrl(cfg.publicUrl)

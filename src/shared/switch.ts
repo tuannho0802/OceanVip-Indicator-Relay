@@ -7,6 +7,8 @@
  *  - Không theo dõi tài khoản: chỉ có số tài khoản, tên sàn và công tắc.
  */
 
+import { pickSetup } from './params'
+
 /** Số tài khoản MT4/MT5: chỉ gồm chữ số. */
 export const LOGIN_RE = /^\d{1,20}$/
 /** Số tài khoản tối đa một VPS báo lên Worker (giữ dưới hạn mức truy vấn D1 mỗi lần gọi). */
@@ -18,7 +20,16 @@ const MAX_UNIX = 4_102_444_800
 export type SwitchItem = { login: string; enabled: boolean; rev: number; at: number }
 
 /** Một tài khoản mà Server báo lên Worker (`POST /api/accounts`); `rev` = bản công tắc Server đang áp dụng. */
-export type AccountReport = { login: string; broker: string | null; enabled: boolean; rev: number }
+export type AccountReport = {
+  login: string
+  broker: string | null
+  enabled: boolean
+  rev: number
+  /** Tuỳ chỉnh input từ xa: rev bộ ghi đè Server đang giữ / rev EA xác nhận đã áp / input hiện tại của EA (chỉ khóa tuỳ chỉnh được). Server đời cũ không báo. */
+  params_rev?: number
+  ea_rev?: number
+  setup?: Record<string, string>
+}
 
 const isInt = (v: unknown, min: number, max: number): v is number => typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max
 
@@ -59,7 +70,14 @@ export function sanitizeAccountReports(v: unknown): AccountReport[] {
     if (typeof o.login !== 'string' || !LOGIN_RE.test(o.login) || seen.has(o.login)) continue
     if (typeof o.enabled !== 'boolean' || !isInt(o.rev, 0, MAX_REV)) continue
     seen.add(o.login)
-    out.push({ login: o.login, broker: cleanBroker(o.broker), enabled: o.enabled, rev: o.rev })
+    const rep: AccountReport = { login: o.login, broker: cleanBroker(o.broker), enabled: o.enabled, rev: o.rev }
+    if (isInt(o.params_rev, 0, MAX_REV)) rep.params_rev = o.params_rev
+    if (isInt(o.ea_rev, 0, MAX_REV)) rep.ea_rev = o.ea_rev
+    if (o.setup !== undefined && o.setup !== null && typeof o.setup === 'object' && !Array.isArray(o.setup)) {
+      const clean = pickSetup(o.setup as Record<string, string>)
+      if (Object.keys(clean).length > 0) rep.setup = clean
+    }
+    out.push(rep)
   }
   return out
 }

@@ -37,7 +37,7 @@ describe('setup và lệnh chờ của EA', () => {
   it('sanitizeSetup giới hạn số khóa, độ dài, ký tự điều khiển', () => {
     const big: Record<string, string> = {}
     for (let i = 0; i < 80; i++) big[`K${i}`] = 'x'
-    expect(Object.keys(sanitizeSetup(big) ?? {})).toHaveLength(48)
+    expect(Object.keys(sanitizeSetup(big) ?? {})).toHaveLength(64)
     expect(sanitizeSetup({ InpComment: 'a\nb\u0000c'.padEnd(200, 'z') })?.InpComment).toHaveLength(48)
     expect(sanitizeSetup({ InpComment: 'a\nb' })?.InpComment).toBe('a b')
     expect(sanitizeSetup([1, 2])).toBeNull()

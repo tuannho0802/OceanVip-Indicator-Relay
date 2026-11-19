@@ -4,6 +4,7 @@ import path from 'node:path'
 import { SKEW_SEC, type WireSignal, safeEqual, sameSecret, signBody, signSignal } from '../shared/hmac'
 import { MAKEUP_RESEND_SEC, isIncompleteResult, makeupWindow, sanitizeOrders, sanitizeSetup } from '../shared/makeup'
 import { dedupeKey, parseAlert, riskReward } from '../shared/parse'
+import { type ParamsItem, paramsLine, sanitizeParamsItem } from '../shared/params'
 import { LOGIN_RE, type AccountReport, type SwitchItem, sanitizeSwitchItem } from '../shared/switch'
 import { APP_VERSION, type ServerConfig } from './config'
 import { type PurgeSpec, type SignalRow, Store } from './db'
@@ -104,6 +105,8 @@ export type AppDeps = {
   onNewAccount?: (login: string) => void
   /** Worker vừa đẩy một lệnh bật/tắt đã được áp: xác nhận lại cho Worker ngay. */
   onSwitched?: () => void
+  /** Worker vừa đẩy bộ input mới (đã áp), hoặc EA vừa báo đã áp rev mới: báo lại Worker ngay (trạng thái "đã áp"). */
+  onParamsChanged?: () => void
 }
 
 export type App = {
@@ -115,6 +118,8 @@ export type App = {
   applySwitches: (items: SwitchItem[]) => boolean
   /** Danh sách tài khoản MT + công tắc đang áp dụng, để báo lên Worker. */
   accountReports: () => AccountReport[]
+  /** Áp các bộ input EA do Worker gửi (kéo bù). Trả true nếu có thay đổi. */
+  applyParams: (items: ParamsItem[]) => boolean
   close: () => void
 }
 
@@ -177,6 +182,19 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
     return changed
   }
   const accountReports = (): AccountReport[] => store.accountReports(cfg.accounts)
+
+  const applyParams = (items: ParamsItem[]): boolean => {
+    const now = clock()
+    let changed = false
+    for (const it of items) {
+      if (cfg.accounts.length > 0 && !cfg.accounts.includes(it.login)) continue
+      if (store.applyParams(it, now)) {
+        changed = true
+        log.info(`input EA từ xa: tài khoản ${it.login} nhận ${Object.keys(it.values).length} giá trị ghi đè (rev ${it.rev})`)
+      }
+    }
+    return changed
+  }
 
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? '/', 'http://x')
@@ -279,6 +297,34 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
       return json(res, 200, { ok: true, changed, rev: store.getSwitch(item.login)?.rev ?? 0 })
     }
 
+    // 2d) Worker đẩy bộ input EA của một tài khoản MT: cùng chữ ký như /api/switch, thân JSON {login, rev, at, values}.
+    // Server chỉ lưu; EA nhận ở nhịp ping kế tiếp (qua Gateway) và báo lại rev đã áp.
+    if (p === '/api/params' && req.method === 'POST') {
+      if (!cfg.syncKey) return json(res, 503, { error: 'worker_disabled' })
+      if (throttled()) return json(res, 429, { error: 'too_many_attempts' })
+      let body: string
+      try {
+        body = await readBody(req, 8192)
+      } catch {
+        return json(res, 413, { error: 'too_large' })
+      }
+      const ts = Number(req.headers['x-ocean-ts'])
+      const sig = String(req.headers['x-ocean-sig'] ?? '')
+      if (!Number.isInteger(ts) || Math.abs(now - ts) > SKEW_SEC) return reject(401, 'bad_time', 'params')
+      if (!safeEqual(sig, await signBody(cfg.syncKey, ts, body))) return reject(401, 'bad_sig', 'params')
+      let item: ParamsItem | null
+      try {
+        item = sanitizeParamsItem(JSON.parse(body))
+      } catch {
+        return json(res, 400, { error: 'bad_json' })
+      }
+      if (!item) return json(res, 400, { error: 'bad_item' })
+      if (cfg.accounts.length > 0 && !cfg.accounts.includes(item.login)) return json(res, 403, { error: 'account_not_allowed' })
+      const changed = applyParams([item])
+      if (changed) deps.onParamsChanged?.()
+      return json(res, 200, { ok: true, changed, rev: store.getParams(item.login)?.rev ?? 0 })
+    }
+
     // 3) Gateway (EA): ping + nhận tín hiệu. Khóa EA để biết đúng là EA của mình; tín hiệu giao xuống có chữ ký.
     if (p === '/api/gw/ping' && req.method === 'POST') {
       if (throttled()) return json(res, 429, { error: 'too_many_attempts' })
@@ -335,6 +381,10 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
         }
       }
       if (newAccount && loginStr) deps.onNewAccount?.(loginStr)
+      // Input EA từ xa: EA báo `prev` = rev bộ ghi đè nó đang áp (0 = chưa áp gì / vừa khởi động lại). Server giao bộ ghi đè khi rev của Server
+      // MỚI hơn `prev`, nên EA khởi động lại tự nhận lại, và EA đã áp rồi thì không nhận lặp.
+      const prev = Number.isInteger(b.prev) && (b.prev as number) >= 0 && (b.prev as number) <= 2_000_000_000 ? (b.prev as number) : 0
+      if (b.prev !== undefined && store.setEaRev(t.login, prev, now)) deps.onParamsChanged?.()
       // Công tắc từ xa (Worker): tài khoản TẮT thì không nhận tín hiệu nào; BẬT lại thì chỉ nhận tín hiệu đến từ lúc bật (không bắn bù
       // các tín hiệu đến trong lúc tắt). Tín hiệu bị chặn được ghi kết quả `remote_off` để không bao giờ giao lại (kể cả bù lệnh).
       const sw = store.getSwitch(t.login)
@@ -369,7 +419,10 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
       )
       // Kèm cấu hình người dùng đặt trên trang Cài đặt: Gateway áp dụng ngay, không phải sửa gateway.env hay chạy lại.
       // `remote: false` = tài khoản đang bị TẮT từ xa: Gateway báo cho EA (EA mới hiện lên biểu đồ; EA cũ bỏ qua).
-      return json(res, 200, { now, signals, remote: !off, config: { tfs: cfg.tfs, symbolMap: cfg.symbolMap } })
+      const pr = store.getParams(t.login)
+      // `params` chỉ có khi EA mới báo `prev` (EA đời cũ không báo thì không gửi) và Server có bộ ghi đè mới hơn.
+      const params = pr !== undefined && b.prev !== undefined && pr.rev > prev ? paramsLine(pr.rev, store.paramValues(t.login)) : undefined
+      return json(res, 200, { now, signals, remote: !off, ...(params ? { params } : {}), config: { tfs: cfg.tfs, symbolMap: cfg.symbolMap } })
     }
 
     // 3b) Gateway hỏi cấu hình (cổng Gateway, khung giờ, ánh xạ symbol) và báo cổng đang nghe thật + lỗi. Nhờ vậy đổi cổng trên
@@ -405,6 +458,12 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
         online: now - t.last_seen <= ONLINE_SEC,
         // false = tài khoản đang bị TẮT từ xa (Worker): không nhận tín hiệu mới.
         remote: store.getSwitch(t.login)?.enabled !== 0,
+        // Input ghi đè từ xa: rev Server giữ, EA đã áp chưa, và các khóa đang bị ghi đè (UI hiện "input này đang do Worker đặt").
+        remote_params: (() => {
+          const pr = store.getParams(t.login)
+          if (!pr || pr.rev === 0) return null
+          return { rev: pr.rev, applied: pr.ea_rev >= pr.rev, keys: Object.keys(store.paramValues(t.login)) }
+        })(),
       }))
       const view = (s: SignalRow) => ({
         id: s.id, received_at: s.received_at, kind: s.kind, side: s.side, symbol: s.symbol, tf: s.tf,
@@ -525,5 +584,5 @@ export function createApp(cfg: ServerConfig, deps: AppDeps = {}): App {
       else res.end()
     })
   })
-  return { server, store, ingestFromWorker, applySwitches, accountReports, close: () => { server.close(); store.db.close() } }
+  return { server, store, ingestFromWorker, applySwitches, accountReports, applyParams, close: () => { server.close(); store.db.close() } }
 }

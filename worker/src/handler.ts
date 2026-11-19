@@ -2,7 +2,7 @@ import { SERVER_ID_RE } from '../../src/shared/connect'
 import { sameSecret } from '../../src/shared/hmac'
 import { appRoute, ensureAdmin } from './app'
 import { FAST_POLL_SEC, broadcastTargets, hookTargets, lockedAmong, normalizeOrigin, pollHint, serverKey, storeAndDeliver } from './deliver'
-import { pendingSwitches, reportAccounts } from './ea'
+import { pendingParams, pendingSwitches, reportAccounts } from './ea'
 import { json } from './http'
 import { appPage, helpPage } from './ui'
 
@@ -171,8 +171,10 @@ async function route(req: Request, env: Env, ctx: Ctx, deps: Deps): Promise<Resp
       const url = normalizeOrigin(known?.url) ?? null
       // Công tắc bật/tắt tài khoản MT mà đường đẩy trực tiếp chưa tới được VPS: gửi kèm để VPS áp (và báo lại qua /api/accounts), kéo dày trong lúc chờ.
       const switches = await pendingSwitches(env, server)
-      const poll = (await pollHint(env, server, url, now)) ?? (switches.some((x) => now - x.at < 900) ? FAST_POLL_SEC : null)
-      return json(200, { now, tunnel: url, ...(poll !== null ? { poll } : {}), ...(switches.length > 0 ? { switches } : {}), items: rows.map((r) => ({ wid: r.id, age: Math.max(0, now - r.created), raw: r.raw })) })
+      // Bộ input EA ghi đè mà đường đẩy chưa tới được VPS: gửi kèm, cùng cách với công tắc.
+      const params = await pendingParams(env, server)
+      const poll = (await pollHint(env, server, url, now)) ?? (switches.some((x) => now - x.at < 900) || params.some((x) => now - x.at < 900) ? FAST_POLL_SEC : null)
+      return json(200, { now, tunnel: url, ...(poll !== null ? { poll } : {}), ...(switches.length > 0 ? { switches } : {}), ...(params.length > 0 ? { params } : {}), items: rows.map((r) => ({ wid: r.id, age: Math.max(0, now - r.created), raw: r.raw })) })
     }
 
     if (p === '/api/ack' && req.method === 'POST') {
@@ -190,7 +192,7 @@ async function route(req: Request, env: Env, ctx: Ctx, deps: Deps): Promise<Resp
     // VPS báo danh sách tài khoản MT + công tắc đang áp dụng (để Admin cấp quyền, người dùng thấy đúng tài khoản được cấp).
     if (p === '/api/accounts' && req.method === 'POST') {
       const raw = await req.text()
-      if (raw.length > 16 * 1024) return json(413, { error: 'too_large' })
+      if (raw.length > 64 * 1024) return json(413, { error: 'too_large' })
       let b: unknown
       try {
         b = JSON.parse(raw)

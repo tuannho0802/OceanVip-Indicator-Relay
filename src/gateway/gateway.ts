@@ -3,6 +3,7 @@ import { type Logger, nullLogger } from '../server/log'
 import { DEFAULT_GW_PORT, MAX_PORT, MIN_GW_PORT, isGwPort } from '../shared/defaults'
 import { safeEqual, signSignal } from '../shared/hmac'
 import { parseCfgLine } from '../shared/makeup'
+import { validateParamsLine } from '../shared/params'
 
 export type GatewayConfig = {
   port: number
@@ -161,6 +162,8 @@ export class Gateway {
           // `ord=` luôn có trong ping của EA mới (rỗng = không có lệnh chờ); EA cũ không gửi thì để undefined.
           orders: kv.ord !== undefined ? orders : undefined,
           setup: setup ?? undefined,
+          // Rev bộ input ghi đè từ xa mà EA đang áp (EA đời cũ không gửi `prev` thì Server không giao bộ ghi đè nào).
+          prev: kv.prev !== undefined && /^\d{1,10}$/.test(kv.prev) ? Number(kv.prev) : undefined,
         }),
         signal: AbortSignal.timeout(this.cfg.timeoutMs),
       })
@@ -183,11 +186,18 @@ export class Gateway {
     this.lastServerOk = this.clock()
     this.lastError = ''
 
-    const data = (await res.json()) as { now: number; signals: CloudSignal[]; remote?: boolean; config?: { tfs?: unknown; symbolMap?: unknown } }
+    const data = (await res.json()) as { now: number; signals: CloudSignal[]; remote?: boolean; params?: unknown; config?: { tfs?: unknown; symbolMap?: unknown } }
     this.applyLiveConfig(data.config)
     const lines = ['OK']
     // Dòng `R|0` = tài khoản này đang bị TẮT từ xa (EA mới hiện trạng thái trên biểu đồ). Chỉ có 2 trường nên EA cũ bỏ qua, không lỗi.
     if (data.remote === false) lines.push('R|0')
+    // Dòng `P|rev=N;InpX=giá trị;...` = bộ input ghi đè từ xa. Chỉ có 2 trường nên EA cũ bỏ qua. Kiểm lại định dạng/khóa/khoảng giá trị
+    // trước khi chuyển cho EA (không tin Server tuyệt đối: dòng lạ bị bỏ).
+    if (typeof data.params === 'string') {
+      const pl = validateParamsLine(data.params)
+      if (pl) lines.push(pl)
+      else this.log.warn('bỏ bộ input từ xa: sai định dạng')
+    }
     const skipped: Ack[] = []
     for (const s of data.signals) {
       // Chỉ nhận tín hiệu do chính Server của bạn ký (cùng khóa EA, gắn với terminal): bị sửa/giả/phát lại thì bỏ.

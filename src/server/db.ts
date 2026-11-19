@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite'
+import { type ParamValues, type ParamsItem, parseValuesJson, pickSetup } from '../shared/params'
 import { LOGIN_RE, MAX_ACCOUNTS, type AccountReport, type SwitchItem } from '../shared/switch'
 import type { Parsed } from '../shared/parse'
 
@@ -59,6 +60,18 @@ export type SwitchRow = {
   updated: number
 }
 
+/** Bộ input EA ghi đè từ xa của một tài khoản MT (không có dòng = EA dùng input của chính nó). */
+export type ParamsRow = {
+  login: string
+  /** Số phiên bản do Worker cấp; chỉ nhận bộ ghi đè có rev mới hơn. */
+  rev: number
+  /** JSON { khóa: giá trị } đã kiểm theo REMOTE_PARAMS. */
+  vals: string
+  /** rev mà EA báo đã áp (EA gửi `prev=` mỗi nhịp ping). */
+  ea_rev: number
+  updated: number
+}
+
 /** Yêu cầu xóa tín hiệu: cũ hơn N ngày, hoặc tất cả tín hiệu đã xong. */
 export type PurgeSpec = { kind: 'older'; days: number } | { kind: 'all' }
 export type PurgeResult = { deleted: number; kept_fresh: number }
@@ -101,6 +114,14 @@ const MIGRATIONS: string[] = [
      enabled INTEGER NOT NULL DEFAULT 1,
      rev INTEGER NOT NULL DEFAULT 0,
      since INTEGER NOT NULL DEFAULT 0,
+     updated INTEGER NOT NULL DEFAULT 0
+   );`,
+  // 5: input EA tuỳ chỉnh từ xa theo tài khoản MT (Worker điều khiển; EA báo lại rev đã áp)
+  `CREATE TABLE params (
+     login TEXT PRIMARY KEY,
+     rev INTEGER NOT NULL DEFAULT 0,
+     vals TEXT NOT NULL DEFAULT '{}',
+     ea_rev INTEGER NOT NULL DEFAULT 0,
      updated INTEGER NOT NULL DEFAULT 0
    );`,
 ]
@@ -317,6 +338,56 @@ export class Store {
     return true
   }
 
+  /** Bộ ghi đè input EA của một tài khoản (undefined = chưa ai đặt). */
+  getParams(login: string | null | undefined): ParamsRow | undefined {
+    if (!login || !LOGIN_RE.test(login)) return undefined
+    return this.db.prepare('SELECT * FROM params WHERE login = ?').get(login) as ParamsRow | undefined
+  }
+
+  /** Áp bộ ghi đè từ Worker. Chỉ nhận khi `rev` mới hơn bản đang có. Trả true nếu có thay đổi. */
+  applyParams(it: ParamsItem, now: number): boolean {
+    const ex = this.getParams(it.login)
+    if (ex && it.rev <= ex.rev) return false
+    this.db
+      .prepare(
+        `INSERT INTO params (login, rev, vals, ea_rev, updated) VALUES (?,?,?,0,?)
+         ON CONFLICT(login) DO UPDATE SET rev = excluded.rev, vals = excluded.vals, updated = excluded.updated`,
+      )
+      .run(it.login, it.rev, JSON.stringify(it.values), now)
+    return true
+  }
+
+  /** EA báo đã áp bộ ghi đè rev N. Trả true nếu số này vừa đổi (để báo Worker ngay). Chưa có dòng và EA báo 0 thì không làm gì. */
+  setEaRev(login: string | null | undefined, rev: number, now: number): boolean {
+    if (!login || !LOGIN_RE.test(login) || !Number.isInteger(rev) || rev < 0) return false
+    const ex = this.getParams(login)
+    if (!ex && rev === 0) return false
+    if (ex && ex.ea_rev === rev) return false
+    this.db
+      .prepare(
+        `INSERT INTO params (login, rev, vals, ea_rev, updated) VALUES (?,0,'{}',?,?)
+         ON CONFLICT(login) DO UPDATE SET ea_rev = excluded.ea_rev`,
+      )
+      .run(login, rev, now)
+    return true
+  }
+
+  /** Bộ ghi đè đang giữ (đã kiểm) của một tài khoản. */
+  paramValues(login: string | null | undefined): ParamValues {
+    return parseValuesJson(this.getParams(login)?.vals)
+  }
+
+  /** Setup (chỉ khóa tuỳ chỉnh được) mà terminal của tài khoản này báo gần nhất; rỗng = EA đời cũ chưa báo. */
+  setupOf(login: string): Record<string, string> {
+    const r = this.db.prepare('SELECT setup FROM terminals WHERE login = ? AND setup IS NOT NULL ORDER BY last_seen DESC LIMIT 1').get(login) as { setup: string } | undefined
+    if (!r) return {}
+    try {
+      return pickSetup(JSON.parse(r.setup) as Record<string, string>)
+    } catch {
+      return {}
+    }
+  }
+
   /** Đã từng thấy tài khoản này chưa (để biết lúc nào cần báo Worker có tài khoản mới). */
   hasLogin(login: string): boolean {
     return this.db.prepare('SELECT 1 AS x FROM terminals WHERE login = ? LIMIT 1').get(login) !== undefined
@@ -333,7 +404,11 @@ export class Store {
       if (!LOGIN_RE.test(r.login)) continue
       if (allowed.length > 0 && !allowed.includes(r.login)) continue
       const sw = this.getSwitch(r.login)
-      out.push({ login: r.login, broker: r.broker, enabled: sw ? sw.enabled === 1 : true, rev: sw?.rev ?? 0 })
+      const pr = this.getParams(r.login)
+      const rep: AccountReport = { login: r.login, broker: r.broker, enabled: sw ? sw.enabled === 1 : true, rev: sw?.rev ?? 0, params_rev: pr?.rev ?? 0, ea_rev: pr?.ea_rev ?? 0 }
+      const setup = this.setupOf(r.login)
+      if (Object.keys(setup).length > 0) rep.setup = setup
+      out.push(rep)
     }
     return out
   }

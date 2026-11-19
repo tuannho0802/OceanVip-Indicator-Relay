@@ -1,6 +1,7 @@
 import { SERVER_ID_RE } from '../../src/shared/connect'
+import { PARAM_KEYS, REMOTE_PARAMS, parseValuesJson, sanitizePatch } from '../../src/shared/params'
 import { LOGIN_RE, MAX_ACCOUNTS, sanitizeAccountReports } from '../../src/shared/switch'
-import { pushSwitch } from './deliver'
+import { pushParams, pushSwitch } from './deliver'
 import type { Env } from './handler'
 import { json } from './http'
 
@@ -62,6 +63,10 @@ async function overview(env: Env, actor: Actor, now: number): Promise<Response> 
     users = (await env.DB.prepare("SELECT id, username FROM users WHERE role = 'user' ORDER BY username").all<{ id: number; username: string }>()).results
   }
 
+  type PRow = { server: string; login: string; rev: number; applied_rev: number; ea_rev: number; vals: string }
+  const prm = new Map<string, PRow>()
+  for (const r of (await env.DB.prepare('SELECT server, login, rev, applied_rev, ea_rev, vals FROM account_params WHERE rev > 0 LIMIT 2000').all<PRow>()).results) prm.set(`${r.server}/${r.login}`, r)
+
   const out = servers.map((s) => {
     const mine = s.owner === actor.id
     return {
@@ -73,7 +78,14 @@ async function overview(env: Env, actor: Actor, now: number): Promise<Response> 
       locked: s.locked === 1 || s.owner_locked === 1,
       accounts: accounts
         .filter((a) => a.server === s.id)
-        .map((a) => ({ login: a.login, broker: a.broker, enabled: a.enabled === 1, applied: a.applied_rev >= a.rev, changed_ago: a.changed === 0 ? null : Math.max(0, now - a.changed) })),
+        .map((a) => {
+          const pr = prm.get(`${a.server}/${a.login}`)
+          return {
+            login: a.login, broker: a.broker, enabled: a.enabled === 1, applied: a.applied_rev >= a.rev, changed_ago: a.changed === 0 ? null : Math.max(0, now - a.changed),
+            // Input EA ghi đè từ xa: số khóa đang ghi đè, VPS đã giữ chưa, EA đã áp chưa (null = chưa từng chỉnh).
+            params: pr ? { overrides: Object.keys(parseValuesJson(pr.vals)).length, vps_applied: pr.applied_rev >= pr.rev, ea_applied: pr.ea_rev >= pr.rev } : null,
+          }
+        }),
       ...(admin ? { access: [...(access.get(s.id)?.values() ?? [])] } : {}),
     }
   })
@@ -116,6 +128,84 @@ async function setSwitch(env: Env, actor: Actor, serverId: string, login: string
   return json(200, { ok: true, login, enabled: enabled === 1, rev, applied, push_error: pushError })
 }
 
+type ParamsRow = { vals: string; rev: number; applied_rev: number; ea_rev: number; setup: string; changed: number }
+type SrvRow = { id: string; owner: number | null; locked: number; owner_locked: number | null }
+
+/** Tìm VPS + tài khoản và kiểm quyền (cùng quy tắc với công tắc). Trả Response lỗi nếu không được. */
+async function accountFor(env: Env, actor: Actor, serverId: string, login: string): Promise<{ s: SrvRow } | Response> {
+  const s = await env.DB.prepare('SELECT s.id, s.owner, s.locked, (SELECT locked FROM users WHERE id = s.owner) AS owner_locked FROM servers s WHERE s.id = ?').bind(serverId).first<SrvRow>()
+  const a = s ? await env.DB.prepare('SELECT 1 AS x FROM accounts WHERE server = ? AND login = ?').bind(serverId, login).first() : null
+  if (!s || !a || !(await canSwitch(env, actor, s, login))) return err(404, 'no_account', 'Không có tài khoản này')
+  return { s }
+}
+
+const paramsBody = (r: ParamsRow | null, now: number) => ({
+  rev: r?.rev ?? 0,
+  vps_applied: (r?.applied_rev ?? 0) >= (r?.rev ?? 0),
+  ea_applied: (r?.ea_rev ?? 0) >= (r?.rev ?? 0),
+  changed_ago: !r || r.changed === 0 ? null : Math.max(0, now - r.changed),
+  // Giá trị Admin/chủ đặt (ghi đè) và input hiện tại EA báo lên (rỗng nếu EA đời cũ chưa báo hoặc chưa chạy lần nào).
+  overrides: parseValuesJson(r?.vals),
+  current: ((): Record<string, string> => {
+    try {
+      const o = JSON.parse(r?.setup ?? '{}') as Record<string, unknown>
+      return Object.fromEntries(PARAM_KEYS.filter((k) => typeof o[k] === 'string').map((k) => [k, o[k] as string]))
+    } catch {
+      return {}
+    }
+  })(),
+})
+
+/** Xem bộ input EA của một tài khoản: danh sách cho phép (để vẽ form), giá trị ghi đè, input hiện tại, trạng thái áp. */
+async function getParams(env: Env, actor: Actor, serverId: string, login: string, now: number): Promise<Response> {
+  const f = await accountFor(env, actor, serverId, login)
+  if (f instanceof Response) return f
+  const r = await env.DB.prepare('SELECT vals, rev, applied_rev, ea_rev, setup, changed FROM account_params WHERE server = ? AND login = ?').bind(serverId, login).first<ParamsRow>()
+  return json(200, { login, spec: REMOTE_PARAMS, ...paramsBody(r, now) })
+}
+
+/**
+ * Đổi một phần bộ input: `values` = { khóa: giá trị } để đặt, { khóa: null } để bỏ ghi đè. Sai một khóa/giá trị là từ chối cả bản vá.
+ * Đổi thật sự thì `rev + 1` rồi đẩy ngay xuống VPS; hụt thì VPS nhận ở lần kéo kế tiếp.
+ */
+async function setParams(env: Env, actor: Actor, serverId: string, login: string, body: Record<string, unknown>, deps: Deps): Promise<Response> {
+  const f = await accountFor(env, actor, serverId, login)
+  if (f instanceof Response) return f
+  const { s } = f
+  if (s.locked === 1 || s.owner_locked === 1) return err(403, 'server_locked', 'VPS hoặc tài khoản chủ VPS đang bị Admin khóa')
+  const patch = sanitizePatch(body.values)
+  if (!patch.ok) return err(400, 'bad_params', patch.error)
+
+  const { now } = deps
+  const cur = await env.DB.prepare('SELECT vals, rev, applied_rev, ea_rev, setup, changed FROM account_params WHERE server = ? AND login = ?').bind(serverId, login).first<ParamsRow>()
+  const next = { ...parseValuesJson(cur?.vals), ...patch.set }
+  for (const k of patch.unset) delete next[k]
+  const nextJson = JSON.stringify(next)
+  const same = nextJson === JSON.stringify(parseValuesJson(cur?.vals))
+
+  let rev = cur?.rev ?? 0
+  if (!same) {
+    const r = await env.DB.prepare(
+      'INSERT INTO account_params (server, login, vals, rev, changed, changed_by) VALUES (?, ?, ?, 1, ?, ?) ' +
+        'ON CONFLICT(server, login) DO UPDATE SET vals = excluded.vals, rev = account_params.rev + 1, changed = excluded.changed, changed_by = excluded.changed_by RETURNING rev',
+    )
+      .bind(serverId, login, nextJson, now, actor.id)
+      .first<{ rev: number }>()
+    if (!r) return err(500, 'store_failed', 'Không lưu được input, thử lại')
+    rev = r.rev
+  }
+  let vpsApplied = (cur?.applied_rev ?? 0) >= rev
+  let pushError: string | null = null
+  if (!vpsApplied && rev > 0) {
+    const p = await pushParams(env, serverId, { login, rev, values: next, at: now }, now, deps.fetchFn)
+    if (p.ok) {
+      vpsApplied = true
+      await env.DB.prepare('UPDATE account_params SET applied_rev = MAX(applied_rev, ?) WHERE server = ? AND login = ?').bind(rev, serverId, login).run()
+    } else pushError = p.error
+  }
+  return json(200, { ok: true, login, rev, changed: !same, vps_applied: vpsApplied, ea_applied: (cur?.ea_rev ?? 0) >= rev && rev > 0, overrides: next, push_error: pushError })
+}
+
 /** Admin cấp VPS + chọn các tài khoản MT cho một User (thay toàn bộ danh sách tài khoản của người đó trên VPS này). */
 async function putAccess(env: Env, actor: Actor, serverId: string, userId: number, body: Record<string, unknown>, now: number): Promise<Response> {
   if (actor.role !== 'admin') return err(403, 'admin_only', 'Chỉ Admin được cấp quyền')
@@ -149,6 +239,7 @@ async function delAccess(env: Env, actor: Actor, serverId: string, userId: numbe
 /** Xóa mọi dữ liệu bật/tắt + quyền của một VPS (khi VPS bị xóa). */
 export async function dropServerEa(env: Env, serverId: string): Promise<void> {
   await env.DB.prepare('DELETE FROM accounts WHERE server = ?').bind(serverId).run()
+  await env.DB.prepare('DELETE FROM account_params WHERE server = ?').bind(serverId).run()
   await env.DB.prepare('DELETE FROM server_access WHERE server = ?').bind(serverId).run()
   await env.DB.prepare('DELETE FROM account_grants WHERE server = ?').bind(serverId).run()
 }
@@ -167,6 +258,16 @@ export async function eaRoute(req: Request, env: Env, parts: string[], actor: Ac
   if (!SERVER_ID_RE.test(serverId)) return err(404, 'not_found', 'Không có đường dẫn này')
   const sub = parts[3] ?? ''
   const id = parts[4] ?? ''
+  // Input EA của một tài khoản: phải đứng TRƯỚC route công tắc (cùng PUT .../accounts/:login nhưng có thêm /params).
+  if (sub === 'accounts' && LOGIN_RE.test(id) && parts[5] === 'params') {
+    if (m === 'GET') return getParams(env, actor, serverId, id, deps.now)
+    if (m === 'PUT') {
+      const b = await body()
+      if (!b) return err(400, 'bad_request', 'Dữ liệu gửi lên không hợp lệ')
+      return setParams(env, actor, serverId, id, b, deps)
+    }
+    return err(405, 'method_not_allowed', 'Sai phương thức')
+  }
   if (sub === 'accounts' && LOGIN_RE.test(id) && m === 'PUT') {
     const b = await body()
     if (!b) return err(400, 'bad_request', 'Dữ liệu gửi lên không hợp lệ')
@@ -200,7 +301,26 @@ export async function reportAccounts(env: Env, server: string, raw: unknown, now
       .bind(server, a.login, a.broker, now, a.enabled ? 1 : 0, a.rev, a.rev)
       .run()
   }
+  // Trạng thái input EA từ xa (VPS đời mới): VPS giữ bộ ghi đè rev nào, EA đã áp rev nào, và input hiện tại của EA.
+  for (const a of list) {
+    if (a.params_rev === undefined && a.setup === undefined) continue
+    // VPS báo rev CAO hơn Worker (Worker mất dữ liệu) thì nhận rev đó để lần đổi kế tiếp không đụng rev cũ (bộ giá trị thì không khôi phục được).
+    await env.DB.prepare(
+      "INSERT INTO account_params (server, login, vals, rev, applied_rev, ea_rev, setup) VALUES (?, ?, '{}', ?, ?, ?, ?) " +
+        'ON CONFLICT(server, login) DO UPDATE SET applied_rev = excluded.applied_rev, ea_rev = excluded.ea_rev, ' +
+        "rev = MAX(account_params.rev, excluded.rev), setup = CASE WHEN excluded.setup = '{}' THEN account_params.setup ELSE excluded.setup END",
+    )
+      .bind(server, a.login, a.params_rev ?? 0, a.params_rev ?? 0, a.ea_rev ?? 0, JSON.stringify(a.setup ?? {}))
+      .run()
+  }
   return json(200, { ok: true, accepted: list.length })
+}
+
+/** Bộ input EA mà VPS này chưa xác nhận đã giữ (kèm trong `/api/pull`). */
+export async function pendingParams(env: Env, server: string): Promise<{ login: string; rev: number; values: Record<string, number>; at: number }[]> {
+  if (server === '') return []
+  const rows = (await env.DB.prepare('SELECT login, vals, rev, changed FROM account_params WHERE server = ? AND rev > applied_rev ORDER BY login LIMIT ?').bind(server, MAX_ACCOUNTS).all<{ login: string; vals: string; rev: number; changed: number }>()).results
+  return rows.map((r) => ({ login: r.login, rev: r.rev, values: parseValuesJson(r.vals), at: r.changed }))
 }
 
 /** Công tắc VPS này chưa xác nhận đã áp (kèm trong `/api/pull`). */

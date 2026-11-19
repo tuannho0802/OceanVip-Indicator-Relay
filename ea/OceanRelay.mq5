@@ -28,7 +28,7 @@
 
 #include <Trade\Trade.mqh>
 
-#define EA_VER "0.5.0"
+#define EA_VER "0.6.0"
 
 input string InpGateway = "http://127.0.0.1:47860";  // Gateway cuc bo (phai nam trong Allow WebRequest)
 input int    InpPingSec = 2;                         // Nhip ping (giay, toi thieu 1)
@@ -108,6 +108,54 @@ input string InpNewsManual1 = "";                                               
 input string InpNewsManual2 = "";                                                                                                     // Danh sách tin nhập tay 2 (dùng khi danh sách 1 quá dài)
 
 //+------------------------------------------------------------------+
+//| INPUT TUY CHINH TU XA (Worker -> Server -> Gateway -> EA).       |
+//| `input` cua MQL la hang so nen EA chay bang ban sao rv_Inp... : |
+//| mac dinh = input; Server gui bo ghi de (P|rev=N;khoa=gia tri)   |
+//| thi ap len ban sao (kep lai theo khoang), bao prev=N len Server. |
+//| KHONG chinh tu xa: InpAllowTrading, Gateway, Magic, Comment...   |
+//+------------------------------------------------------------------+
+double rv_InpLotPerOrder;
+double rv_InpMaxTotalLots;
+int rv_InpMaxAgeSec;
+double rv_InpMaxDevPips;
+int rv_InpSlippagePts;
+bool rv_InpCloseBadFill;
+int rv_InpRetrySec;
+int rv_InpRetryMaxSec;
+bool rv_InpTP3Only;
+double rv_InpSLExtend;
+double rv_InpTP1Extend;
+double rv_InpTP2Extend;
+double rv_InpTP3Extend;
+bool rv_InpBEEnable;
+ENUM_BE_TRIGGER rv_InpBETrigger;
+double rv_InpBEOffset;
+ENUM_BE_UNIT rv_InpBEUnit;
+bool rv_InpBELockProfit;
+bool rv_InpMakeupEnable;
+int rv_InpMakeupExpirySec;
+bool rv_InpUsePauseFilter;
+ENUM_TIME_SOURCE rv_InpFilterTimeSource;
+bool rv_InpPause1On;
+int rv_InpPause1StartH;
+int rv_InpPause1StartM;
+int rv_InpPause1EndH;
+int rv_InpPause1EndM;
+bool rv_InpPause2On;
+int rv_InpPause2StartH;
+int rv_InpPause2StartM;
+int rv_InpPause2EndH;
+int rv_InpPause2EndM;
+bool rv_InpUseNewsFilter;
+int rv_InpNewsBeforeMin;
+int rv_InpNewsAfterMin;
+bool rv_InpNewsCPI;
+bool rv_InpNewsFed;
+bool rv_InpNewsNFP;
+bool rv_InpNewsAllHigh;
+int g_paramsRev = 0; // rev bo ghi de dang ap (0 = chua ap: dung input cua EA)
+
+//+------------------------------------------------------------------+
 //| LOC GIO NGUNG VAO LENH + LOC TIN MANH                            |
 //| Chi chan VAO THEM lenh (tin hieu moi, thu lai, bu lenh); KHONG   |
 //| dong/sua lenh dang mo. Ack: time_block | news_block (ket qua cuoi,|
@@ -119,9 +167,9 @@ bool   g_remoteOff = false; // true = tai khoan nay dang bi TAT tu xa (Worker): 
 string g_blockLast = "?"; // trang thai lan truoc (chi Print khi doi)
 
 datetime FtNow() {
-    if (InpFilterTimeSource == TIME_SOURCE_UTC)
+    if (rv_InpFilterTimeSource == TIME_SOURCE_UTC)
         return TimeGMT();
-    if (InpFilterTimeSource == TIME_SOURCE_SERVER)
+    if (rv_InpFilterTimeSource == TIME_SOURCE_SERVER)
         return TimeTradeServer();
     return TimeLocal();
 }
@@ -137,16 +185,16 @@ bool InMinWindow(int nowMin, int sh, int sm, int eh, int em) {
 }
 
 string PauseBlockText() {
-    if (!InpUsePauseFilter)
+    if (!rv_InpUsePauseFilter)
         return "";
     datetime ft = FtNow();
     MqlDateTime dt;
     TimeToStruct(ft, dt);
     int m = dt.hour * 60 + dt.min;
-    if (InpPause1On && InMinWindow(m, InpPause1StartH, InpPause1StartM, InpPause1EndH, InpPause1EndM))
-        return StringFormat("Khung 1 %02d:%02d-%02d:%02d", InpPause1StartH, InpPause1StartM, InpPause1EndH, InpPause1EndM);
-    if (InpPause2On && InMinWindow(m, InpPause2StartH, InpPause2StartM, InpPause2EndH, InpPause2EndM))
-        return StringFormat("Khung 2 %02d:%02d-%02d:%02d", InpPause2StartH, InpPause2StartM, InpPause2EndH, InpPause2EndM);
+    if (rv_InpPause1On && InMinWindow(m, rv_InpPause1StartH, rv_InpPause1StartM, rv_InpPause1EndH, rv_InpPause1EndM))
+        return StringFormat("Khung 1 %02d:%02d-%02d:%02d", rv_InpPause1StartH, rv_InpPause1StartM, rv_InpPause1EndH, rv_InpPause1EndM);
+    if (rv_InpPause2On && InMinWindow(m, rv_InpPause2StartH, rv_InpPause2StartM, rv_InpPause2EndH, rv_InpPause2EndM))
+        return StringFormat("Khung 2 %02d:%02d-%02d:%02d", rv_InpPause2StartH, rv_InpPause2StartM, rv_InpPause2EndH, rv_InpPause2EndM);
     return "";
 }
 
@@ -185,7 +233,7 @@ string ManualNewsBlockText() {
     if (n == 0)
         return "";
     datetime ft = FtNow();
-    int b = MathMax(0, MathMin(720, InpNewsBeforeMin)) * 60, a = MathMax(0, MathMin(720, InpNewsAfterMin)) * 60;
+    int b = MathMax(0, MathMin(720, rv_InpNewsBeforeMin)) * 60, a = MathMax(0, MathMin(720, rv_InpNewsAfterMin)) * 60;
     for (int i = 0; i < n; i++)
         if (ft >= g_manNews[i] - b && ft < g_manNews[i] + a)
             return "Tin nhap tay " + TimeToString(g_manNews[i], TIME_DATE | TIME_MINUTES);
@@ -201,11 +249,11 @@ string g_calSig = "";
 bool NewsNameMatch(string name) {
     string up = name;
     StringToUpper(up);
-    if (InpNewsCPI && (StringFind(up, "CPI") >= 0 || StringFind(up, "CONSUMER PRICE") >= 0))
+    if (rv_InpNewsCPI && (StringFind(up, "CPI") >= 0 || StringFind(up, "CONSUMER PRICE") >= 0))
         return true;
-    if (InpNewsNFP && (StringFind(up, "NONFARM") >= 0 || StringFind(up, "NON-FARM") >= 0 || StringFind(up, "NFP") >= 0))
+    if (rv_InpNewsNFP && (StringFind(up, "NONFARM") >= 0 || StringFind(up, "NON-FARM") >= 0 || StringFind(up, "NFP") >= 0))
         return true;
-    if (InpNewsFed && (StringFind(up, "FOMC") >= 0 || StringFind(up, "FED ") >= 0 || StringFind(up, "FEDERAL FUNDS") >= 0 || StringFind(up, "POWELL") >= 0))
+    if (rv_InpNewsFed && (StringFind(up, "FOMC") >= 0 || StringFind(up, "FED ") >= 0 || StringFind(up, "FEDERAL FUNDS") >= 0 || StringFind(up, "POWELL") >= 0))
         return true;
     if (InpNewsExtraWords != "") {
         string w[];
@@ -243,7 +291,7 @@ void NewsRefresh() {
             continue;
         if (ev.type == CALENDAR_TYPE_HOLIDAY)
             continue;
-        bool hit = (InpNewsAllHigh && ev.importance == CALENDAR_IMPORTANCE_HIGH) || NewsNameMatch(ev.name);
+        bool hit = (rv_InpNewsAllHigh && ev.importance == CALENDAR_IMPORTANCE_HIGH) || NewsNameMatch(ev.name);
         if (!hit)
             continue;
         int k = ArraySize(g_calT);
@@ -269,7 +317,7 @@ string CalendarBlockText() {
     if (n == 0)
         return "";
     datetime srv = TimeTradeServer();
-    int b = MathMax(0, MathMin(720, InpNewsBeforeMin)) * 60, a = MathMax(0, MathMin(720, InpNewsAfterMin)) * 60;
+    int b = MathMax(0, MathMin(720, rv_InpNewsBeforeMin)) * 60, a = MathMax(0, MathMin(720, rv_InpNewsAfterMin)) * 60;
     for (int i = 0; i < n; i++)
         if (srv >= g_calT[i] - b && srv < g_calT[i] + a)
             return g_calN[i] + " " + TimeToString(g_calT[i], TIME_MINUTES) + " (gio server)";
@@ -277,7 +325,7 @@ string CalendarBlockText() {
 }
 
 string NewsBlockText() {
-    if (!InpUseNewsFilter)
+    if (!rv_InpUseNewsFilter)
         return "";
     string r = CalendarBlockText();
     if (r != "")
@@ -308,16 +356,16 @@ string EntryBlocked() {
 }
 
 string TimeSourceLabel() {
-    if (InpFilterTimeSource == TIME_SOURCE_UTC)
+    if (rv_InpFilterTimeSource == TIME_SOURCE_UTC)
         return "gio UTC";
-    if (InpFilterTimeSource == TIME_SOURCE_SERVER)
+    if (rv_InpFilterTimeSource == TIME_SOURCE_SERVER)
         return "gio Broker";
     return "gio VPS/Local";
 }
 
 string BlockLabel() {
-    string p = !InpUsePauseFilter ? "TAT" : ((InpPause1On || InpPause2On) ? "BAT" : "BAT (ca 2 khung TAT)");
-    string n = !InpUseNewsFilter ? "TAT" : (StringFormat("BAT (-%dp/+%dp)", InpNewsBeforeMin, InpNewsAfterMin));
+    string p = !rv_InpUsePauseFilter ? "TAT" : ((rv_InpPause1On || rv_InpPause2On) ? "BAT" : "BAT (ca 2 khung TAT)");
+    string n = !rv_InpUseNewsFilter ? "TAT" : (StringFormat("BAT (-%dp/+%dp)", rv_InpNewsBeforeMin, rv_InpNewsAfterMin));
     return "Loc gio: " + p + " [" + TimeSourceLabel() + "] | Loc tin: " + n + (g_blockWhy != "" ? "  >> DANG NGUNG: " + g_blockWhy : "");
 }
 
@@ -361,21 +409,140 @@ int      g_jobN = 0;
 int      g_pingN = 0;       // dem nhip ping: cu moi 10 nhip gui kem cfg= (Setup cua EA)
 
 //+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+void RvReset()
+  {
+   rv_InpLotPerOrder = InpLotPerOrder;
+   rv_InpMaxTotalLots = InpMaxTotalLots;
+   rv_InpMaxAgeSec = InpMaxAgeSec;
+   rv_InpMaxDevPips = InpMaxDevPips;
+   rv_InpSlippagePts = InpSlippagePts;
+   rv_InpCloseBadFill = InpCloseBadFill;
+   rv_InpRetrySec = InpRetrySec;
+   rv_InpRetryMaxSec = InpRetryMaxSec;
+   rv_InpTP3Only = InpTP3Only;
+   rv_InpSLExtend = InpSLExtend;
+   rv_InpTP1Extend = InpTP1Extend;
+   rv_InpTP2Extend = InpTP2Extend;
+   rv_InpTP3Extend = InpTP3Extend;
+   rv_InpBEEnable = InpBEEnable;
+   rv_InpBETrigger = InpBETrigger;
+   rv_InpBEOffset = InpBEOffset;
+   rv_InpBEUnit = InpBEUnit;
+   rv_InpBELockProfit = InpBELockProfit;
+   rv_InpMakeupEnable = InpMakeupEnable;
+   rv_InpMakeupExpirySec = InpMakeupExpirySec;
+   rv_InpUsePauseFilter = InpUsePauseFilter;
+   rv_InpFilterTimeSource = InpFilterTimeSource;
+   rv_InpPause1On = InpPause1On;
+   rv_InpPause1StartH = InpPause1StartH;
+   rv_InpPause1StartM = InpPause1StartM;
+   rv_InpPause1EndH = InpPause1EndH;
+   rv_InpPause1EndM = InpPause1EndM;
+   rv_InpPause2On = InpPause2On;
+   rv_InpPause2StartH = InpPause2StartH;
+   rv_InpPause2StartM = InpPause2StartM;
+   rv_InpPause2EndH = InpPause2EndH;
+   rv_InpPause2EndM = InpPause2EndM;
+   rv_InpUseNewsFilter = InpUseNewsFilter;
+   rv_InpNewsBeforeMin = InpNewsBeforeMin;
+   rv_InpNewsAfterMin = InpNewsAfterMin;
+   rv_InpNewsCPI = InpNewsCPI;
+   rv_InpNewsFed = InpNewsFed;
+   rv_InpNewsNFP = InpNewsNFP;
+   rv_InpNewsAllHigh = InpNewsAllHigh;
+  }
+double RvD(string v, double lo, double hi) { double x = StringToDouble(v); if(x < lo) x = lo; if(x > hi) x = hi; return x; }
+int    RvI(string v, int lo, int hi) { int x = (int)StringToInteger(v); if(x < lo) x = lo; if(x > hi) x = hi; return x; }
+bool   RvB(string v) { return StringToInteger(v) != 0; }
+
+// true = khoa duoc phep chinh tu xa (khoa la bi bo qua).
+bool RvSet(string k, string v)
+  {
+   if(k == "InpLotPerOrder") rv_InpLotPerOrder = RvD(v, 0.01, 100);
+   else if(k == "InpMaxTotalLots") rv_InpMaxTotalLots = RvD(v, 0.01, 1000);
+   else if(k == "InpMaxAgeSec") rv_InpMaxAgeSec = RvI(v, 1, 3600);
+   else if(k == "InpMaxDevPips") rv_InpMaxDevPips = RvD(v, 0, 1000);
+   else if(k == "InpSlippagePts") rv_InpSlippagePts = RvI(v, 0, 1000);
+   else if(k == "InpCloseBadFill") rv_InpCloseBadFill = RvB(v);
+   else if(k == "InpRetrySec") rv_InpRetrySec = RvI(v, 1, 60);
+   else if(k == "InpRetryMaxSec") rv_InpRetryMaxSec = RvI(v, 1, 600);
+   else if(k == "InpTP3Only") rv_InpTP3Only = RvB(v);
+   else if(k == "InpSLExtend") rv_InpSLExtend = RvD(v, -1000, 1000);
+   else if(k == "InpTP1Extend") rv_InpTP1Extend = RvD(v, -1000, 1000);
+   else if(k == "InpTP2Extend") rv_InpTP2Extend = RvD(v, -1000, 1000);
+   else if(k == "InpTP3Extend") rv_InpTP3Extend = RvD(v, -1000, 1000);
+   else if(k == "InpBEEnable") rv_InpBEEnable = RvB(v);
+   else if(k == "InpBETrigger") rv_InpBETrigger = (ENUM_BE_TRIGGER)RvI(v, 1, 2);
+   else if(k == "InpBEOffset") rv_InpBEOffset = RvD(v, 0, 1000);
+   else if(k == "InpBEUnit") rv_InpBEUnit = (ENUM_BE_UNIT)RvI(v, 0, 1);
+   else if(k == "InpBELockProfit") rv_InpBELockProfit = RvB(v);
+   else if(k == "InpMakeupEnable") rv_InpMakeupEnable = RvB(v);
+   else if(k == "InpMakeupExpirySec") rv_InpMakeupExpirySec = RvI(v, 30, 1800);
+   else if(k == "InpUsePauseFilter") rv_InpUsePauseFilter = RvB(v);
+   else if(k == "InpFilterTimeSource") rv_InpFilterTimeSource = (ENUM_TIME_SOURCE)RvI(v, 0, 2);
+   else if(k == "InpPause1On") rv_InpPause1On = RvB(v);
+   else if(k == "InpPause1StartH") rv_InpPause1StartH = RvI(v, 0, 23);
+   else if(k == "InpPause1StartM") rv_InpPause1StartM = RvI(v, 0, 59);
+   else if(k == "InpPause1EndH") rv_InpPause1EndH = RvI(v, 0, 23);
+   else if(k == "InpPause1EndM") rv_InpPause1EndM = RvI(v, 0, 59);
+   else if(k == "InpPause2On") rv_InpPause2On = RvB(v);
+   else if(k == "InpPause2StartH") rv_InpPause2StartH = RvI(v, 0, 23);
+   else if(k == "InpPause2StartM") rv_InpPause2StartM = RvI(v, 0, 59);
+   else if(k == "InpPause2EndH") rv_InpPause2EndH = RvI(v, 0, 23);
+   else if(k == "InpPause2EndM") rv_InpPause2EndM = RvI(v, 0, 59);
+   else if(k == "InpUseNewsFilter") rv_InpUseNewsFilter = RvB(v);
+   else if(k == "InpNewsBeforeMin") rv_InpNewsBeforeMin = RvI(v, 0, 720);
+   else if(k == "InpNewsAfterMin") rv_InpNewsAfterMin = RvI(v, 0, 720);
+   else if(k == "InpNewsCPI") rv_InpNewsCPI = RvB(v);
+   else if(k == "InpNewsFed") rv_InpNewsFed = RvB(v);
+   else if(k == "InpNewsNFP") rv_InpNewsNFP = RvB(v);
+   else if(k == "InpNewsAllHigh") rv_InpNewsAllHigh = RvB(v);
+   else return false;
+   return true;
+  }
+
+// kv = "rev=N;khoa=gia tri;..." (da duoc Gateway kiem). Chi ap khi rev khac rev dang ap; khoa khong co trong kv = quay ve input cua EA.
+void ApplyRemoteParams(string kv)
+  {
+   string p[];
+   int n = StringSplit(kv, ';', p);
+   int rev = 0;
+   for(int i = 0; i < n; i++)
+      if(StringFind(p[i], "rev=") == 0) rev = (int)StringToInteger(StringSubstr(p[i], 4));
+   if(rev <= 0 || rev == g_paramsRev) return;
+   RvReset();
+   int cnt = 0;
+   for(int j = 0; j < n; j++)
+     {
+      int eq = StringFind(p[j], "=");
+      if(eq <= 0) continue;
+      string key = StringSubstr(p[j], 0, eq);
+      if(key == "rev") continue;
+      if(RvSet(key, StringSubstr(p[j], eq + 1))) cnt++;
+     }
+   g_trade.SetDeviationInPoints(rv_InpSlippagePts);
+   g_paramsRev = rev;
+   g_pingN = 0; // gui cfg= moi ngay o nhip ping ke tiep de Server/Worker thay gia tri dang dung
+   Print("OceanRelay: ap input tu xa rev=", rev, " (", cnt, " gia tri ghi de)");
+  }
+
 int OnInit()
   {
+   RvReset();
    if(MQLInfoInteger(MQL_TESTER)) { Print("OceanRelay: khong chay trong Strategy Tester."); return INIT_FAILED; }
    if(!EventSetTimer(1)) { Print("OceanRelay: EventSetTimer that bai"); return INIT_FAILED; }
    // Tre ngau nhien 0-2 giay truoc ping dau de nhieu EA khong ban cung luc.
    g_nextPingMs = GetTickCount64() + (ulong)(MathRand() % 2000);
    g_trade.SetExpertMagicNumber(InpMagic);
-   g_trade.SetDeviationInPoints(InpSlippagePts);
+   g_trade.SetDeviationInPoints(rv_InpSlippagePts);
    g_trade.SetAsyncMode(false);
    ParseManualNews();
    Print("OceanRelay ", EA_VER, " san sang. Gateway=", InpGateway, InpAllowTrading ? " | DANH LENH: BAT" : " | DANH LENH: TAT (chi theo doi)",
          " | BREAKEVEN: ", BeLabel(),
          " | BU LENH: ", MakeupLabel(), " | ", BlockLabel(),
-         " | SAI SO GIA: ", InpMaxDevPips > 0 ? DoubleToString(InpMaxDevPips, 1) + " pip" : "khong kiem",
-         " | RETRY: moi ", IntegerToString(InpRetrySec), "s, toi da ", IntegerToString(InpRetryMaxSec), "s");
+         " | SAI SO GIA: ", rv_InpMaxDevPips > 0 ? DoubleToString(rv_InpMaxDevPips, 1) + " pip" : "khong kiem",
+         " | RETRY: moi ", IntegerToString(rv_InpRetrySec), "s, toi da ", IntegerToString(rv_InpRetryMaxSec), "s");
    if(InpAllowTrading && !TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)) Print("OceanRelay: CANH BAO - Algo Trading dang tat tren terminal.");
    return INIT_SUCCEEDED;
   }
@@ -435,6 +602,7 @@ void Ping()
    body += "mg=" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN), 2) + "\n";
    body += "fm=" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_FREE), 2) + "\n";
    body += "ver=" + EA_VER + "\n";
+   body += "prev=" + IntegerToString(g_paramsRev) + "\n";
    body += "pos=" + BuildPositions() + "\n";
    body += "ord=" + BuildOrders() + "\n";
    if(g_pingN % 10 == 0) body += "cfg=" + BuildCfg() + "\n";
@@ -508,6 +676,8 @@ void HandleResponse(string text)
      {
       // Dong "R|0" = tai khoan bi TAT tu xa (Server da chan tin hieu; EA chi hien trang thai). Khong co dong nay = dang BAT.
       if(StringFind(lines[i], "R|0") == 0) { g_remoteOff = true; continue; }
+      // Dong "P|rev=N;khoa=gia tri;..." = bo input ghi de tu xa (Gateway da kiem). Chi co 2 truong nen EA cu bo qua.
+      if(StringFind(lines[i], "P|") == 0) { ApplyRemoteParams(StringSubstr(lines[i], 2)); continue; }
       string f[];
       int nf = StringSplit(lines[i], '|', f);
       if(nf < 3) continue;
@@ -676,7 +846,7 @@ double PipSize(string sym)
    return pt * pp;
   }
 
-double TolPrice(string sym) { return InpMaxDevPips > 0 ? InpMaxDevPips * PipSize(sym) : 0.0; }
+double TolPrice(string sym) { return rv_InpMaxDevPips > 0 ? rv_InpMaxDevPips * PipSize(sym) : 0.0; }
 
 // Loi tam thoi: dang thu lai duoc. 6/8/128/135-138/146 la ma kieu MT4 ma mot so san MT5 van tra ve (6 = no connection with trade server).
 bool IsTransientRc(uint rc)
@@ -689,10 +859,10 @@ bool IsTransientRc(uint rc)
 
 double LegTp(const RetryJob &j, int k)
   {
-   if(InpTP3Only) return j.tp3;
+   if(rv_InpTP3Only) return j.tp3;
    return (k == 0) ? j.tp1 : ((k == 1) ? j.tp2 : j.tp3);
   }
-int LegNo(int k) { return InpTP3Only ? 3 : k + 1; }
+int LegNo(int k) { return rv_InpTP3Only ? 3 : k + 1; }
 int AllMask(const RetryJob &j) { return (1 << j.n) - 1; }
 int Acct(const RetryJob &j) { return j.doneMask | j.pendMask; } // chan da "co lenh" (da mo hoac da dat bu)
 int CountBits(int m)
@@ -785,7 +955,7 @@ bool RunJob(RetryJob &j)
       // Het thoi gian thu lai ma van thieu chan: bat bu lenh thi dat lenh cho (Limit/Stop) cho cac chan con thieu.
       if(MakeupOn()) { EnsureMarked(j); MakeupLegs(j); }
       j.dropMask = all & ~Acct(j);
-      Print("OceanRelay: #", j.id, " het han thu lai (", InpRetryMaxSec, "s), da mo ", CountBits(j.doneMask), "/", j.n);
+      Print("OceanRelay: #", j.id, " het han thu lai (", rv_InpRetryMaxSec, "s), da mo ", CountBits(j.doneMask), "/", j.n);
       return true;
      }
    j.tries++;
@@ -819,7 +989,7 @@ bool RunJob(RetryJob &j)
       if(MakeupOn()) { EnsureMarked(j); MakeupLegs(j); }
       j.dropMask = all & ~Acct(j);
       Print("OceanRelay: bo #", j.id, " gia ", DoubleToString(px, dg), " lech Entry ", DoubleToString(j.entry, dg), " ",
-            DoubleToString(MathAbs(px - j.entry) / PipSize(sym), 1), " pip > ", DoubleToString(InpMaxDevPips, 1), " pip (da mo ", CountBits(j.doneMask), "/", j.n, ")");
+            DoubleToString(MathAbs(px - j.entry) / PipSize(sym), 1), " pip > ", DoubleToString(rv_InpMaxDevPips, 1), " pip (da mo ", CountBits(j.doneMask), "/", j.n, ")");
       return true;
      }
    // SL phai dung phia va du xa so voi GIA HIEN TAI (Server da kiem phia theo Entry, day la kiem lan 2 theo gia that)
@@ -850,11 +1020,11 @@ bool RunJob(RetryJob &j)
          Print("OceanRelay: chan TP", LegNo(k), " cua #", j.id, st == 1 ? " da co lenh o san" : " da co lenh cho o san");
          continue;
         }
-      if(TotalExposureLots() + j.lot > InpMaxTotalLots + 1e-9)
+      if(TotalExposureLots() + j.lot > rv_InpMaxTotalLots + 1e-9)
         { j.dropMask |= all & ~Acct(j); j.why = "max_lots"; Print("OceanRelay: bo #", j.id, " vuot InpMaxTotalLots"); break; }
 
       // (3) Truot gia = phan sai so con lai theo huong bat loi (mua: khop khong cao hon Entry+sai so; ban: khong thap hon Entry-sai so).
-      int dev = InpSlippagePts;
+      int dev = rv_InpSlippagePts;
       if(tol > 0)
         {
          double room = buy ? (j.entry + tol - px) : (px - (j.entry - tol));
@@ -875,8 +1045,8 @@ bool RunJob(RetryJob &j)
          if(tol > 0 && fp > 0 && MathAbs(fp - j.entry) > tol + pt / 2)
            {
             Print("OceanRelay: CANH BAO #", j.id, " chan TP", LegNo(k), " khop ", DoubleToString(fp, dg), " lech Entry ", DoubleToString(j.entry, dg), " ",
-                  DoubleToString(MathAbs(fp - j.entry) / PipSize(sym), 1), " pip > ", DoubleToString(InpMaxDevPips, 1), " pip -> ngung mo not cac chan con lai");
-            if(InpCloseBadFill) CloseLeg(j, k);
+                  DoubleToString(MathAbs(fp - j.entry) / PipSize(sym), 1), " pip > ", DoubleToString(rv_InpMaxDevPips, 1), " pip -> ngung mo not cac chan con lai");
+            if(rv_InpCloseBadFill) CloseLeg(j, k);
             j.dropMask |= all & ~Acct(j);
             j.why = "fill_dev";
             break;
@@ -907,7 +1077,7 @@ void ProcessRetries()
       if(GetTickCount64() < g_jobs[i].nextMs) continue;
       if(!RunJob(g_jobs[i]))
         {
-         g_jobs[i].nextMs = GetTickCount64() + (ulong)MathMax(1, InpRetrySec) * 1000;
+         g_jobs[i].nextMs = GetTickCount64() + (ulong)MathMax(1, rv_InpRetrySec) * 1000;
          continue;
         }
       string res = JobResult(g_jobs[i], false);
@@ -933,11 +1103,11 @@ void ProcessRetries()
 //| khi khoi dong lai; tin hieu do EA doi cu xu ly (khong co so thu  |
 //| tu luu) thi bo qua de khong mo lap khi nang cap.                 |
 //+------------------------------------------------------------------+
-bool MakeupOn() { return InpAllowTrading && InpMakeupEnable; }
-int  MakeupSec() { return MathMax(30, MathMin(1800, InpMakeupExpirySec)); }
+bool MakeupOn() { return InpAllowTrading && rv_InpMakeupEnable; }
+int  MakeupSec() { return MathMax(30, MathMin(1800, rv_InpMakeupExpirySec)); }
 string MakeupLabel()
   {
-   if(!InpMakeupEnable) return "TAT";
+   if(!rv_InpMakeupEnable) return "TAT";
    return (InpAllowTrading ? "BAT" : "BAT (nhung DANH LENH dang TAT)") + " (Limit/Stop, het han " + IntegerToString(MakeupSec()) + "s)";
   }
 
@@ -1084,7 +1254,7 @@ void MakeupLegs(RetryJob &j)
       int st = LegState(j, k);
       if(st == 1) { j.doneMask |= bit; continue; }
       if(st == 2) { j.pendMask |= bit; continue; }
-      if(TotalExposureLots() + j.lot > InpMaxTotalLots + 1e-9)
+      if(TotalExposureLots() + j.lot > rv_InpMaxTotalLots + 1e-9)
         { j.dropMask |= all & ~Acct(j); j.why = "max_lots"; Print("OceanRelay: bu lenh #", j.id, " vuot InpMaxTotalLots"); break; }
       double tp = LegTp(j, k);
       double dist = MathAbs(px - j.entry);
@@ -1096,7 +1266,7 @@ void MakeupLegs(RetryJob &j)
          if(!(buy ? (tp > px) : (tp < px))) { j.dropMask |= bit; j.why = "bad_levels"; continue; }
          if(MathAbs(tp - px) < minDist || MathAbs(px - j.sl) < minDist) { j.dropMask |= bit; j.why = "bad_stops"; continue; }
          g_trade.SetTypeFillingBySymbol(sym);
-         g_trade.SetDeviationInPoints(InpSlippagePts);
+         g_trade.SetDeviationInPoints(rv_InpSlippagePts);
          string cm = LegComment(j, k);
          sent = buy ? g_trade.Buy(j.lot, sym, 0, NormalizeDouble(j.sl, dg), NormalizeDouble(tp, dg), cm)
                     : g_trade.Sell(j.lot, sym, 0, NormalizeDouble(j.sl, dg), NormalizeDouble(tp, dg), cm);
@@ -1128,12 +1298,12 @@ void MakeupLegs(RetryJob &j)
   // Mo rong SL/TP so voi tin hieu goc theo don vi GIA (khong phai pip). Duong = XA hon (BUY: SL xuong/TP len, SELL: SL len/TP xuong); AM = GAN lai; 0 = giu nguyen.
   // Sau khi dieu chinh kiem lai thu tu: BUY SL < Entry < TP1 <= TP2 <= TP3 (SELL nguoc lai). Sai thu tu thi tra false va KHONG sua SL/TP.
   bool ApplySlTpExtend(const bool buy, const double entry, double& sl, double& tp1, double& tp2, double& tp3) {
-      if (InpSLExtend == 0 && InpTP1Extend == 0 && InpTP2Extend == 0 && InpTP3Extend == 0)
+      if (rv_InpSLExtend == 0 && rv_InpTP1Extend == 0 && rv_InpTP2Extend == 0 && rv_InpTP3Extend == 0)
           return true;
-      double n0 = buy ? sl - InpSLExtend : sl + InpSLExtend;
-      double n1 = buy ? tp1 + InpTP1Extend : tp1 - InpTP1Extend;
-      double n2 = buy ? tp2 + InpTP2Extend : tp2 - InpTP2Extend;
-      double n3 = buy ? tp3 + InpTP3Extend : tp3 - InpTP3Extend;
+      double n0 = buy ? sl - rv_InpSLExtend : sl + rv_InpSLExtend;
+      double n1 = buy ? tp1 + rv_InpTP1Extend : tp1 - rv_InpTP1Extend;
+      double n2 = buy ? tp2 + rv_InpTP2Extend : tp2 - rv_InpTP2Extend;
+      double n3 = buy ? tp3 + rv_InpTP3Extend : tp3 - rv_InpTP3Extend;
       bool ok = buy ? (n0 < entry && entry < n1 && n1 <= n2 && n2 <= n3) : (n0 > entry && entry > n1 && n1 >= n2 && n2 >= n3);
       if (!ok) {
           Print("OceanRelay: SL/TP sau khi dieu chinh sai thu tu so voi Entry ", DoubleToString(entry, 5), " (SL ", DoubleToString(n0, 5), " TP1 ", DoubleToString(n1, 5), " TP2 ", DoubleToString(n2, 5), " TP3 ", DoubleToString(n3, 5), ") -> bo tin hieu");
@@ -1165,8 +1335,8 @@ string MakeupRedeliver(ulong id, string side, string symbol, double entry, doubl
        return "bad_levels";
    RetryJob j;
    j.id = id; j.buy = buy; j.symbol = sym; j.entry = entry; j.sl = sl; j.tp1 = tp1; j.tp2 = tp2; j.tp3 = tp3;
-   j.n = InpTP3Only ? 1 : 3;
-   j.lot = NormVol(sym, InpTP3Only ? InpLotPerOrder * 3 : InpLotPerOrder);
+   j.n = rv_InpTP3Only ? 1 : 3;
+   j.lot = NormVol(sym, rv_InpTP3Only ? rv_InpLotPerOrder * 3 : rv_InpLotPerOrder);
    j.seq = seq; j.seqDay = day; j.marked = true;
    j.doneMask = 0; j.dropMask = 0; j.pendMask = 0; j.tries = 0; j.lastRc = 0; j.why = "";
    j.deadlineMs = 0; j.nextMs = 0;
@@ -1240,32 +1410,47 @@ string BuildCfg()
   {
    string s = "";
    s += CfgKv("InpAllowTrading", B01(InpAllowTrading));
-   s += CfgKv("InpLotPerOrder", DoubleToString(InpLotPerOrder, 2));
-   s += CfgKv("InpMaxTotalLots", DoubleToString(InpMaxTotalLots, 2));
-   s += CfgKv("InpMaxAgeSec", IntegerToString(InpMaxAgeSec));
-   s += CfgKv("InpMaxDevPips", DoubleToString(InpMaxDevPips, 1));
-   s += CfgKv("InpSlippagePts", IntegerToString(InpSlippagePts));
-   s += CfgKv("InpCloseBadFill", B01(InpCloseBadFill));
-   s += CfgKv("InpRetrySec", IntegerToString(InpRetrySec));
-   s += CfgKv("InpRetryMaxSec", IntegerToString(InpRetryMaxSec));
-   s += CfgKv("InpTP3Only", B01(InpTP3Only));
-   s += CfgKv("InpSLExtend", DoubleToString(InpSLExtend, 2));
-   s += CfgKv("InpTP1Extend", DoubleToString(InpTP1Extend, 2));
-   s += CfgKv("InpTP2Extend", DoubleToString(InpTP2Extend, 2));
-   s += CfgKv("InpTP3Extend", DoubleToString(InpTP3Extend, 2));
+   s += CfgKv("InpLotPerOrder", DoubleToString(rv_InpLotPerOrder, 2));
+   s += CfgKv("InpMaxTotalLots", DoubleToString(rv_InpMaxTotalLots, 2));
+   s += CfgKv("InpMaxAgeSec", IntegerToString(rv_InpMaxAgeSec));
+   s += CfgKv("InpMaxDevPips", DoubleToString(rv_InpMaxDevPips, 1));
+   s += CfgKv("InpSlippagePts", IntegerToString(rv_InpSlippagePts));
+   s += CfgKv("InpCloseBadFill", B01(rv_InpCloseBadFill));
+   s += CfgKv("InpRetrySec", IntegerToString(rv_InpRetrySec));
+   s += CfgKv("InpRetryMaxSec", IntegerToString(rv_InpRetryMaxSec));
+   s += CfgKv("InpTP3Only", B01(rv_InpTP3Only));
+   s += CfgKv("InpSLExtend", DoubleToString(rv_InpSLExtend, 2));
+   s += CfgKv("InpTP1Extend", DoubleToString(rv_InpTP1Extend, 2));
+   s += CfgKv("InpTP2Extend", DoubleToString(rv_InpTP2Extend, 2));
+   s += CfgKv("InpTP3Extend", DoubleToString(rv_InpTP3Extend, 2));
    s += CfgKv("InpMagic", (string)InpMagic);
    s += CfgKv("InpComment", InpComment);
-   s += CfgKv("InpMakeupEnable", B01(InpMakeupEnable));
+   s += CfgKv("InpMakeupEnable", B01(rv_InpMakeupEnable));
    s += CfgKv("InpMakeupExpirySec", IntegerToString(MakeupSec()));
-   s += CfgKv("InpBEEnable", B01(InpBEEnable));
-   s += CfgKv("InpBETrigger", IntegerToString((int)InpBETrigger));
-   s += CfgKv("InpBEOffset", DoubleToString(InpBEOffset, 2));
-   s += CfgKv("InpBEUnit", IntegerToString((int)InpBEUnit));
-   s += CfgKv("InpBELockProfit", B01(InpBELockProfit));
-   s += CfgKv("InpUsePauseFilter", B01(InpUsePauseFilter));
-   s += CfgKv("InpUseNewsFilter", B01(InpUseNewsFilter));
-   s += CfgKv("InpNewsBeforeMin", IntegerToString(InpNewsBeforeMin));
-   s += CfgKv("InpNewsAfterMin", IntegerToString(InpNewsAfterMin));
+   s += CfgKv("InpBEEnable", B01(rv_InpBEEnable));
+   s += CfgKv("InpBETrigger", IntegerToString((int)rv_InpBETrigger));
+   s += CfgKv("InpBEOffset", DoubleToString(rv_InpBEOffset, 2));
+   s += CfgKv("InpBEUnit", IntegerToString((int)rv_InpBEUnit));
+   s += CfgKv("InpBELockProfit", B01(rv_InpBELockProfit));
+   s += CfgKv("InpUsePauseFilter", B01(rv_InpUsePauseFilter));
+   s += CfgKv("InpUseNewsFilter", B01(rv_InpUseNewsFilter));
+   s += CfgKv("InpNewsBeforeMin", IntegerToString(rv_InpNewsBeforeMin));
+   s += CfgKv("InpNewsAfterMin", IntegerToString(rv_InpNewsAfterMin));
+   s += CfgKv("InpFilterTimeSource", IntegerToString((int)rv_InpFilterTimeSource));
+   s += CfgKv("InpPause1On", B01(rv_InpPause1On));
+   s += CfgKv("InpPause1StartH", IntegerToString((int)rv_InpPause1StartH));
+   s += CfgKv("InpPause1StartM", IntegerToString((int)rv_InpPause1StartM));
+   s += CfgKv("InpPause1EndH", IntegerToString((int)rv_InpPause1EndH));
+   s += CfgKv("InpPause1EndM", IntegerToString((int)rv_InpPause1EndM));
+   s += CfgKv("InpPause2On", B01(rv_InpPause2On));
+   s += CfgKv("InpPause2StartH", IntegerToString((int)rv_InpPause2StartH));
+   s += CfgKv("InpPause2StartM", IntegerToString((int)rv_InpPause2StartM));
+   s += CfgKv("InpPause2EndH", IntegerToString((int)rv_InpPause2EndH));
+   s += CfgKv("InpPause2EndM", IntegerToString((int)rv_InpPause2EndM));
+   s += CfgKv("InpNewsCPI", B01(rv_InpNewsCPI));
+   s += CfgKv("InpNewsFed", B01(rv_InpNewsFed));
+   s += CfgKv("InpNewsNFP", B01(rv_InpNewsNFP));
+   s += CfgKv("InpNewsAllHigh", B01(rv_InpNewsAllHigh));
    return s;
   }
 
@@ -1287,7 +1472,7 @@ string OnEntrySignal(ulong id, string side, string symbol, string tf, double ent
        return blk;
    }
    // Tin hieu qua han thuong: neu bat bu lenh va con trong cua so N giay thi KHONG bo, chuyen sang dat bu lenh cho (Limit/Stop).
-   bool stale = (ageSec > InpMaxAgeSec);
+   bool stale = (ageSec > rv_InpMaxAgeSec);
    if(stale && !(MakeupOn() && ageSec <= MakeupSec())) { Print("OceanRelay: bo #", id, " qua cu (", ageSec, "s)"); return "too_old"; }
    string sigSymbol = symbol;
    symbol = ResolveSymbol(sigSymbol);
@@ -1304,14 +1489,14 @@ string OnEntrySignal(ulong id, string side, string symbol, string tf, double ent
 
    RetryJob j;
    j.id = id; j.buy = buy; j.symbol = symbol; j.entry = entry; j.sl = sl; j.tp1 = tp1; j.tp2 = tp2; j.tp3 = tp3;
-   j.n = InpTP3Only ? 1 : 3;
-   j.lot = NormVol(symbol, InpTP3Only ? InpLotPerOrder * 3 : InpLotPerOrder);
-   if(TotalExposureLots() + j.lot * j.n > InpMaxTotalLots + 1e-9) { Print("OceanRelay: bo #", id, " vuot InpMaxTotalLots"); return "max_lots"; }
+   j.n = rv_InpTP3Only ? 1 : 3;
+   j.lot = NormVol(symbol, rv_InpTP3Only ? rv_InpLotPerOrder * 3 : rv_InpLotPerOrder);
+   if(TotalExposureLots() + j.lot * j.n > rv_InpMaxTotalLots + 1e-9) { Print("OceanRelay: bo #", id, " vuot InpMaxTotalLots"); return "max_lots"; }
    j.seq = 0; j.seqDay = 0; j.marked = false; j.doneMask = 0; j.dropMask = 0; j.pendMask = 0; j.tries = 0; j.lastRc = 0; j.why = "";
    j.recv = TimeTradeServer() - (datetime)ageSec;
    ulong nowMs = GetTickCount64();
-   j.deadlineMs = nowMs + (ulong)MathMax(1, InpRetryMaxSec) * 1000;
-   j.nextMs = nowMs + (ulong)MathMax(1, InpRetrySec) * 1000;
+   j.deadlineMs = nowMs + (ulong)MathMax(1, rv_InpRetryMaxSec) * 1000;
+   j.nextMs = nowMs + (ulong)MathMax(1, rv_InpRetrySec) * 1000;
 
    if(stale)
      {
@@ -1333,7 +1518,7 @@ string OnEntrySignal(ulong id, string side, string symbol, string tf, double ent
    // Chua mo du vi loi tam thoi (mat ket noi may chu giao dich...): giu lai de thu lai moi InpRetrySec giay.
    g_jobs[g_jobN] = j;
    g_jobN++;
-   Print("OceanRelay: #", id, " moi mo ", CountBits(j.doneMask), "/", j.n, " lenh, se thu lai toi da ", InpRetryMaxSec, "s neu gia con trong ", DoubleToString(InpMaxDevPips, 1), " pip");
+   Print("OceanRelay: #", id, " moi mo ", CountBits(j.doneMask), "/", j.n, " lenh, se thu lai toi da ", rv_InpRetryMaxSec, "s neu gia con trong ", DoubleToString(rv_InpMaxDevPips, 1), " pip");
    return JobResult(j, true);
   }
 
@@ -1364,9 +1549,9 @@ int   g_beTry[64];
 int   g_beN = 0;
 
   string BeLabel() {
-      if (!InpBEEnable)
+      if (!rv_InpBEEnable)
           return "TAT";
-      return "BAT (sau TP" + IntegerToString((int)InpBETrigger) + ", SL " + (InpBELockProfit ? "khoa lai " : "phia lo ") + DoubleToString(MathAbs(InpBEOffset), 2) + (InpBEUnit == BE_UNIT_PIPS ? " pip" : " gia") + " so voi gia vao)";
+      return "BAT (sau TP" + IntegerToString((int)rv_InpBETrigger) + ", SL " + (rv_InpBELockProfit ? "khoa lai " : "phia lo ") + DoubleToString(MathAbs(rv_InpBEOffset), 2) + (rv_InpBEUnit == BE_UNIT_PIPS ? " pip" : " gia") + " so voi gia vao)";
   }
 
 ulong BeKeyOf(int day, int seq) { return (ulong)day * 10000 + (ulong)seq; }
@@ -1400,8 +1585,8 @@ bool ParseComment(string cm, int &seq, int &tpn)
   }
 
   double BeOffsetPrice(string sym) {
-      double off = MathAbs(InpBEOffset);
-      if (InpBEUnit == BE_UNIT_PIPS)
+      double off = MathAbs(rv_InpBEOffset);
+      if (rv_InpBEUnit == BE_UNIT_PIPS)
           off = off * SymbolInfoDouble(sym, SYMBOL_POINT) * 10.0;
       return off;
   }
@@ -1460,7 +1645,7 @@ bool ApplyBreakEven(int seq, int day, int n)
       double pt = SymbolInfoDouble(sym, SYMBOL_POINT);
       int dg = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
       double off = BeOffsetPrice(sym);
-      double want = buy ? (InpBELockProfit ? open + off : open - off) : (InpBELockProfit ? open - off : open + off);
+      double want = buy ? (rv_InpBELockProfit ? open + off : open - off) : (rv_InpBELockProfit ? open - off : open + off);
       want = NormalizeDouble(want, dg);
 
       // SL hien tai da tot hon hoac bang muc moi: khong dong vao (khong bao gio keo SL ra xa).
@@ -1486,9 +1671,9 @@ bool ApplyBreakEven(int seq, int day, int n)
 // Chay moi giay. Nhe khi khong co viec: chi quet danh sach vi the dang mo.
 void ManageBreakEven()
   {
-   if(!InpBEEnable || !InpAllowTrading) return;
+   if(!rv_InpBEEnable || !InpAllowTrading) return;
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED)) return;
-   int trig = (int)InpBETrigger;
+   int trig = (int)rv_InpBETrigger;
 
    ulong    keys[32];
    int      seqs[32];
@@ -1552,7 +1737,7 @@ void UpdateComment(bool ok)
     Comment("OceanRelay ", EA_VER, InpAllowTrading ? "  [DANH LENH: BAT]" : "  [CHI THEO DOI]", "\n",
             ok ? "Gateway: OK" : "Gateway: LOI (xem tab Experts)", "\n",
             g_remoteOff ? "NHAN TIN HIEU: TAT TU XA (bat lai tren trang Worker)" : "Nhan tin hieu: BAT", "\n",
-            "Sai so gia: ", InpMaxDevPips > 0 ? DoubleToString(InpMaxDevPips, 1) + " pip" : "khong kiem", "   Cho thu lai: ", IntegerToString(g_jobN), " tin hieu", "\n",
+            "Sai so gia: ", rv_InpMaxDevPips > 0 ? DoubleToString(rv_InpMaxDevPips, 1) + " pip" : "khong kiem", "   Cho thu lai: ", IntegerToString(g_jobN), " tin hieu", "\n",
             "BreakEven: ", BeLabel(), "\n",
             "Bu lenh: ", MakeupLabel(), "\n",
             BlockLabel(), "\n",

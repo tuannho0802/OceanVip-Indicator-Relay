@@ -13,7 +13,7 @@ export const DEFAULT_MAKEUP_SEC = 300
 /** Khoảng tối thiểu (giây) giữa hai lần Server giao lại cùng một tín hiệu còn dở cho cùng một terminal. */
 export const MAKEUP_RESEND_SEC = 15
 
-const SETUP_MAX_KEYS = 48
+const SETUP_MAX_KEYS = 64
 const SETUP_MAX_VALUE = 48
 const ORDERS_MAX = 100
 

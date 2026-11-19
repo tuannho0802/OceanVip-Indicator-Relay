@@ -1,6 +1,8 @@
 # Lịch sử thay đổi
 
 ## Server (chưa phát hành) · EA OceanRelay MT5 0.5.0 · MT4 0.4.0
+
+- **Tuỳ chỉnh input EA từ xa** theo tài khoản MT (tab "Bật/tắt EA" → "Tuỳ chỉnh input"): Worker → Server → Gateway → EA (dòng `P|`), EA báo `prev=`; hiện trạng thái chờ VPS / chờ EA / đã áp. Danh sách input cho phép ở `src/shared/params.ts`. **EA MT5 0.6.0 / MT4 0.5.0**. Migration Worker `0005_ea_params.sql`, Server schema v5.
 **Bật/tắt EA từ xa theo tài khoản MT + cấp quyền cho người dùng khác**
 - Tab **Bật/tắt EA** trên Worker: mỗi VPS liệt kê các tài khoản MT4/MT5 (chỉ số tài khoản + tên sàn, không theo dõi số dư/lệnh) với nút Bật/Tắt. TẮT = Server ngừng giao tín hiệu cho tài khoản đó (EA không phải sửa logic); tín hiệu đến lúc tắt bị bỏ (ack `remote_off`), bật lại **không bắn bù**. Lệnh đang mở vẫn do EA tự quản lý.
 - Phân quyền: Admin thấy tất cả và là người duy nhất cấp quyền; chủ VPS bật/tắt mọi tài khoản trên VPS của mình; **người được cấp** chỉ thấy VPS được cấp và đúng những tài khoản được tick (VPS có 3 tài khoản, cấp 2 → họ chỉ thấy 2, không biết có tài khoản thứ 3). Tài khoản ngoài quyền trả `no_account` như chưa từng tồn tại.

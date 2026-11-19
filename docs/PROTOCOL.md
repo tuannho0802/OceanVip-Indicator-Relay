@@ -38,6 +38,8 @@ Nhận: dòng đầu `OK`, tiếp theo:
 
 Kết quả ack của EA: `received`, `opened:N`, `trading_off`, `too_old`, `price_dev`, `bad_levels`, `bad_stops`, `no_symbol`, `max_lots`, `failed:<retcode>`. EA 0.3.0 thêm: `retry:D/N` (đang thử lại: D chân đã mở / N chân cần mở), `partial:D/N_<lý do>` (kết thúc thiếu chân; lý do là một mã ở trên hoặc `fill_dev`, `retry_timeout`, `no_connection`, `no_quote`), và các mã kết thúc khi không mở được chân nào (`no_connection`, `retry_timeout`, `fill_dev`...). Ack cùng id gửi lại thì **ghi đè** kết quả cũ ở Server (`retry:1/3` → `opened:3`). Gateway tách ack ở dấu `:` đầu tiên nên phần sau (`opened:3`, `failed:10031`) giữ nguyên. Gateway tự sinh `skipped_tf`, `bad_sig`. Server ghi `remote_off` cho tín hiệu bị chặn vì tài khoản đang TẮT từ xa.
 
+- `P|rev=N;InpX=giá trị;...` (chỉ khi có): bộ input ghi đè từ xa (Worker). Chỉ có 2 trường nên EA cũ bỏ qua. EA báo `prev=<rev đang áp>` trong ping; Server chỉ gửi khi rev của Server > `prev`. Khóa nằm ngoài `REMOTE_PARAMS` (`src/shared/params.ts`) không bao giờ đi qua đường này. EA MT5 0.6.0 / MT4 0.5.0.
+
 EA MT5 0.4.0 / MT4 0.3.0 (bù lệnh) thêm: `pending:P`, `opened:D+pending:P`; `partial:(D+P)/N_<lý do>` đếm cả chân đã đặt chờ; lý do thêm `makeup_expired`. Ack `received` **không ghi đè** kết quả cụ thể đã có, chỉ làm mới giờ ack.
 
 ### Giao lại để bù lệnh (Server → Gateway → EA)

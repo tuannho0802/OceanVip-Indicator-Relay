@@ -1,3 +1,4 @@
+import { type ParamsItem, sanitizeParamsItems } from '../shared/params'
 import { type AccountReport, type SwitchItem, sanitizeSwitchItems } from '../shared/switch'
 import type { Logger } from './log'
 
@@ -16,6 +17,8 @@ export type WorkerSyncOptions = {
     ingest: (item: WorkerItem) => IngestResult
     /** Áp các lệnh bật/tắt tài khoản MT do Worker gửi kèm khi kéo bù. Không có = bỏ qua (Server đời cũ). */
     applySwitches?: (items: SwitchItem[]) => boolean
+    /** Áp các bộ input EA do Worker gửi kèm khi kéo bù. Không có = bỏ qua (Server đời cũ). */
+    applyParams?: (items: ParamsItem[]) => boolean
     /** Danh sách tài khoản MT + công tắc đang áp dụng để báo lên Worker. Không có = không báo. */
     accounts?: () => AccountReport[]
     fetchFn?: typeof fetch
@@ -262,9 +265,9 @@ export class WorkerSync {
             this.o.log.warn(`worker: ${this.lastError}`)
             return false
         }
-        let data: { items?: unknown; tunnel?: unknown; poll?: unknown; switches?: unknown }
+        let data: { items?: unknown; tunnel?: unknown; poll?: unknown; switches?: unknown; params?: unknown }
         try {
-            data = (await res.json()) as { items?: unknown; tunnel?: unknown; poll?: unknown; switches?: unknown }
+            data = (await res.json()) as { items?: unknown; tunnel?: unknown; poll?: unknown; switches?: unknown; params?: unknown }
         } catch {
             this.lastError = 'Worker trả dữ liệu không đọc được'
             return false
@@ -287,6 +290,14 @@ export class WorkerSync {
             const list = sanitizeSwitchItems(data.switches)
             if (list.length > 0) {
                 this.o.applySwitches(list)
+                switched = true
+            }
+        }
+        // Bộ input EA mà đường đẩy trực tiếp chưa tới được: lưu rồi báo lại Worker (Worker chỉ gửi những bộ chưa được xác nhận).
+        if (this.o.applyParams) {
+            const plist = sanitizeParamsItems(data.params)
+            if (plist.length > 0) {
+                this.o.applyParams(plist)
                 switched = true
             }
         }

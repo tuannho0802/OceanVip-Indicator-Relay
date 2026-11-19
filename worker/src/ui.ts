@@ -43,7 +43,7 @@ const CLIENT_JS = String.raw`
 (function () {
   'use strict'
   var root = document.getElementById('root')
-  var S = { loaded: false, tab: 'conn', user: null, setup: 'ok', notice: '', ov: null, ea: null, sigs: null, ret: null, codes: {}, secret: null, probes: {}, probing: {} }
+  var S = { loaded: false, tab: 'conn', user: null, setup: 'ok', notice: '', ov: null, ea: null, pp: null, sigs: null, ret: null, codes: {}, secret: null, probes: {}, probing: {} }
   var toastTimer = 0
 
   function add(e, c) {
@@ -370,14 +370,62 @@ const CLIENT_JS = String.raw`
   }
 
   // ---------- Bật/tắt EA theo tài khoản MT ----------
+  function eaParamsBadge(p) {
+    if (!p) return null
+    var txt = p.overrides > 0 ? 'Ghi đè ' + p.overrides + ' input' : 'Không ghi đè'
+    if (!p.vps_applied) return h('span', { class: 'badge warn', text: txt + ' · chờ VPS' })
+    if (!p.ea_applied) return h('span', { class: 'badge warn', text: txt + ' · chờ EA nhận' })
+    return h('span', { class: 'badge ok', text: txt + ' · EA đã áp' })
+  }
   function eaAccountRow(s, a) {
-    return h('div', { class: 'row', style: 'margin-top:6px' },
+    var open = S.pp && S.pp.server === s.id && S.pp.login === a.login && S.pp.d
+    var row = h('div', { class: 'row', style: 'margin-top:6px' },
       h('span', { class: 'mono', text: '#' + a.login }),
       a.broker ? h('span', { class: 'muted', text: a.broker }) : null,
       h('span', { class: 'badge ' + (a.enabled ? 'ok' : 'bad'), text: a.enabled ? 'ĐANG BẬT' : 'ĐANG TẮT' }),
       a.applied ? null : h('span', { class: 'badge warn', text: 'Đang chờ VPS áp dụng' }),
+      eaParamsBadge(a.params),
       h('span', { class: 'grow' }),
+      h('button', { 'data-act': 'eaParams', 'data-server': s.id, 'data-login': a.login, text: open ? 'Đóng input' : 'Tuỳ chỉnh input' }),
       h('button', { class: a.enabled ? 'dng' : 'pri', 'data-act': 'eaToggle', 'data-server': s.id, 'data-login': a.login, 'data-v': a.enabled ? '0' : '1', disabled: s.locked ? true : null, text: a.enabled ? 'Tắt' : 'Bật' }))
+    return h('div', null, row, open ? eaParamsPanel(s, S.pp.d) : null)
+  }
+  /** Form tuỳ chỉnh input EA của một tài khoản: chỉ các ô bạn đã chạm vào mới được gửi đi; ô số để trống = bỏ ghi đè (EA dùng input của chính nó). */
+  function eaParamsPanel(s, d) {
+    var f = h('form', { 'data-form': 'eaParamsSave', 'data-server': s.id, 'data-login': d.login, style: 'margin-top:8px;padding:10px 12px;background:#0b1d29;border:1px solid #17394d;border-radius:10px' })
+    var keys = Object.keys(d.overrides)
+    add(f, h('div', { class: 'muted', text: 'Giá trị bạn đặt ở đây ghi đè input trên EA (EA áp ở nhịp ping kế tiếp, vài giây). Ô nào bạn không chạm vào thì EA giữ nguyên. Bấm ↺ hoặc xóa trống ô số để EA quay về input của chính nó. Công tắc tổng InpAllowTrading, địa chỉ Gateway, Magic và Comment không chỉnh từ xa được.' }))
+    if (Object.keys(d.current).length === 0) add(f, h('div', { class: 'muted', style: 'margin-top:4px;color:#f0c060', text: 'EA chưa báo input hiện tại (EA bản cũ hoặc chưa chạy lại): vẫn đặt được, nhưng ô chưa hiện giá trị đang dùng.' }))
+    var group = ''
+    var grid = null
+    d.spec.forEach(function (p) {
+      if (p.group !== group) {
+        group = p.group
+        add(f, h('h3', { style: 'margin:12px 0 4px', text: group }))
+        grid = h('div', { style: 'display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:6px 14px' })
+        add(f, grid)
+      }
+      var over = d.overrides[p.key]
+      var cur = d.current[p.key]
+      var eff = over !== undefined ? over : (cur !== undefined && cur !== '' ? Number(cur) : null)
+      var ctl
+      if (p.type === 'bool') ctl = h('input', { type: 'checkbox', name: p.key, checked: eff === 1 ? true : null })
+      else if (p.options) {
+        ctl = h('select', { name: p.key },
+          eff === null ? h('option', { value: '', text: '(không đổi)' }) : null,
+          p.options.map(function (o) { return h('option', { value: o.value, text: o.label, selected: eff === o.value ? true : null }) }))
+      } else ctl = h('input', { type: 'number', name: p.key, class: 'num', style: 'width:96px', min: p.min, max: p.max, step: p.type === 'int' ? 1 : String(1 / Math.pow(10, p.dp || 2)), value: eff === null ? '' : eff, placeholder: 'EA' })
+      add(grid, h('label', { style: 'flex-direction:row;align-items:center;gap:6px;color:#e6f4f8' },
+        ctl,
+        h('span', { text: p.label }),
+        over !== undefined ? h('span', { class: 'badge ok', text: 'ghi đè' }) : null,
+        over !== undefined ? h('button', { type: 'button', style: 'padding:0 6px', title: 'Bỏ ghi đè: EA dùng input của chính nó', 'data-act': 'eaParamReset', 'data-key': p.key, text: '↺' }) : null))
+    })
+    add(f, h('div', { class: 'row', style: 'margin-top:12px' },
+      h('button', { class: 'pri', type: 'submit', disabled: s.locked ? true : null, text: 'Lưu và gửi xuống EA' }),
+      keys.length > 0 ? h('button', { type: 'button', class: 'dng', 'data-act': 'eaParamsClear', text: 'Bỏ hết ghi đè (' + keys.length + ')' }) : null,
+      h('span', { class: 'muted', text: d.rev > 0 ? 'Phiên bản ' + d.rev + (d.vps_applied ? (d.ea_applied ? ' · EA đã áp' : ' · VPS đã nhận, chờ EA') : ' · đang chờ VPS') + (d.changed_ago !== null ? ' · đổi ' + ago(d.changed_ago) : '') : 'Chưa ghi đè gì' })))
+    return f
   }
   function eaAccessBox(s, d) {
     var total = s.accounts.length
@@ -592,6 +640,31 @@ const CLIENT_JS = String.raw`
       return loadSigs().then(render)
     }).catch(fail)
   }
+  /** Tải lại form + trạng thái của tài khoản đang mở (không đè lên ô đang gõ dở). */
+  function reloadParams() {
+    if (!S.pp || S.tab !== 'ea') return Promise.resolve()
+    var pp = S.pp
+    return Promise.all([api('GET', '/api/ea/' + pp.server + '/accounts/' + pp.login + '/params'), api('GET', '/api/ea')]).then(function (r) {
+      if (!S.pp || S.pp.server !== pp.server || S.pp.login !== pp.login) return
+      var editing = root.querySelector('form[data-form="eaParamsSave"] [data-touched]')
+      S.ea = r[1]
+      if (!editing) S.pp.d = r[0]
+      render()
+    })
+  }
+  /** Gửi bản vá input EA của tài khoản đang mở, rồi tải lại và hỏi lại vài lần cho tới khi EA xác nhận đã áp. */
+  function sendParams(values, okMsg) {
+    if (!S.pp) return
+    var pp = S.pp
+    call('PUT', '/api/ea/' + pp.server + '/accounts/' + pp.login + '/params', { values: values }).then(function (r) {
+      if (!r) return
+      if (!r.changed) toast('Không có gì thay đổi so với bộ ghi đè hiện tại')
+      else if (r.vps_applied) toast(okMsg + '. VPS đã nhận, EA sẽ áp ở nhịp ping kế tiếp (vài giây)')
+      else toast('Đã lưu. VPS chưa nhận ngay (' + (r.push_error || 'chưa rõ lý do') + '): sẽ tự áp dụng khi VPS liên lạc lại với Worker.', true)
+      api('GET', '/api/ea/' + pp.server + '/accounts/' + pp.login + '/params').then(function (d) { if (S.pp) { S.pp.d = d; loadEa().then(render).catch(fail) } }).catch(fail)
+      ;[3000, 10000, 30000, 90000].forEach(function (ms) { setTimeout(function () { if (S.user) reloadParams().catch(function () {}) }, ms) })
+    })
+  }
   var acts = {
     tab: function (t) {
       S.tab = t.getAttribute('data-v')
@@ -695,6 +768,20 @@ const CLIENT_JS = String.raw`
         if (!r.applied) { [5000, 20000, 60000].forEach(function (ms) { setTimeout(function () { if (S.user && S.tab === 'ea') loadEa().then(render).catch(function () {}) }, ms) }) }
       })
     },
+    eaParams: function (t) {
+      var sid = t.getAttribute('data-server')
+      var login = t.getAttribute('data-login')
+      if (S.pp && S.pp.server === sid && S.pp.login === login) { S.pp = null; render(); return }
+      api('GET', '/api/ea/' + sid + '/accounts/' + login + '/params').then(function (d) { S.pp = { server: sid, login: login, d: d }; render() }).catch(fail)
+    },
+    eaParamReset: function (t) { var o = {}; o[t.getAttribute('data-key')] = null; sendParams(o, 'Đã bỏ ghi đè: EA dùng input của chính nó') },
+    eaParamsClear: function () {
+      if (!S.pp) return
+      if (!window.confirm('Bỏ hết ghi đè của tài khoản #' + S.pp.login + '? EA quay về đúng input đặt trên EA.')) return
+      var o = {}
+      Object.keys(S.pp.d.overrides).forEach(function (k) { o[k] = null })
+      sendParams(o, 'Đã bỏ hết ghi đè')
+    },
     eaPickAll: function (t) {
       var f = t.closest('form')
       var boxes = f ? f.querySelectorAll('input[name="login"]') : []
@@ -752,6 +839,19 @@ const CLIENT_JS = String.raw`
         refresh()
       })
     },
+    eaParamsSave: function (f) {
+      var patch = {}
+      var n = 0
+      f.querySelectorAll('[data-touched]').forEach(function (c) {
+        var k = c.getAttribute('name')
+        if (!k) return
+        if (c.type === 'checkbox') { patch[k] = c.checked; n++ }
+        else if (c.value === '') { if (c.tagName === 'INPUT') { patch[k] = null; n++ } }
+        else { patch[k] = Number(c.value); n++ }
+      })
+      if (n === 0) { toast('Bạn chưa đổi ô nào', true); return }
+      sendParams(patch, 'Đã lưu ' + n + ' thay đổi')
+    },
     eaGrantAdd: function (f) {
       var logins = []
       f.querySelectorAll('input[name="login"]').forEach(function (c) { if (c.checked) logins.push(c.value) })
@@ -793,7 +893,13 @@ const CLIENT_JS = String.raw`
     var fn = forms[f.getAttribute('data-form')]
     if (fn) fn(f)
   })
+  function markTouched(ev) {
+    var el = ev.target
+    if (el && el.closest && el.closest('form[data-form="eaParamsSave"]') && el.getAttribute && el.getAttribute('name')) el.setAttribute('data-touched', '1')
+  }
+  root.addEventListener('input', markTouched)
   root.addEventListener('change', function (ev) {
+    markTouched(ev)
     var el = ev.target
     if (el.getAttribute && el.getAttribute('data-change') === 'eaGrant') {
       var sid = el.getAttribute('data-server')

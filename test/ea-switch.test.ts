@@ -158,8 +158,8 @@ describe('báo tài khoản cho Worker', () => {
         await ping('222')
         await pushSwitch(sw('222', false, 3))
         expect(app.accountReports()).toEqual(expect.arrayContaining([
-            { login: '111', broker: 'Demo', enabled: true, rev: 0 },
-            { login: '222', broker: 'Demo', enabled: false, rev: 3 },
+            { login: '111', broker: 'Demo', enabled: true, rev: 0, params_rev: 0, ea_rev: 0 },
+            { login: '222', broker: 'Demo', enabled: false, rev: 3, params_rev: 0, ea_rev: 0 },
         ]))
         app.close()
         await setup({ accounts: ['111'] })

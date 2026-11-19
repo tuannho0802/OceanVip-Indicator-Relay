@@ -1,5 +1,6 @@
 import { deriveServerKey } from '../../src/shared/connect'
 import { signBody } from '../../src/shared/hmac'
+import type { ParamsItem } from '../../src/shared/params'
 import type { SwitchItem } from '../../src/shared/switch'
 import type { Ctx, Env } from './handler'
 
@@ -213,17 +214,17 @@ export type SwitchPush = { ok: boolean; status: number | null; error: string | n
 export const SWITCH_TIMEOUT_MS = 4000
 
 /**
- * Đẩy một lệnh bật/tắt tài khoản MT xuống VPS (`POST <tunnel>/api/switch`, ký HMAC như `/api/ingest`). Một lần, không thử lại:
+ * Đẩy một lệnh xuống VPS (`POST <tunnel><path>`, ký HMAC như `/api/ingest`). Một lần, không thử lại:
  * hụt thì trạng thái vẫn nằm ở D1 (`rev > applied_rev`) và VPS nhận được ở lần kéo kế tiếp (Worker gợi ý kéo dày trong lúc đó).
  */
-export async function pushSwitch(env: Env, server: string, item: SwitchItem, now: number, fetchFn: typeof fetch): Promise<SwitchPush> {
+async function pushItem(env: Env, server: string, path: '/api/switch' | '/api/params', item: unknown, now: number, fetchFn: typeof fetch): Promise<SwitchPush> {
     if (!env.SYNC_KEY) return { ok: false, status: null, error: 'sync_disabled' }
     const origin = await serverOrigin(env, server)
     if (!origin) return { ok: false, status: null, error: 'no_url' }
     const key = await serverKey(env, server)
     const body = JSON.stringify(item)
     try {
-        const res = await fetchFn(`${origin}/api/switch`, {
+        const res = await fetchFn(`${origin}${path}`, {
             method: 'POST',
             headers: { 'content-type': 'application/json', 'x-ocean-ts': String(now), 'x-ocean-sig': await signBody(key, now, body) },
             body,
@@ -245,6 +246,12 @@ export async function pushSwitch(env: Env, server: string, item: SwitchItem, now
         return { ok: false, status: null, error: (e as Error)?.name === 'TimeoutError' ? 'timeout' : 'network' }
     }
 }
+
+/** Đẩy một lệnh bật/tắt tài khoản MT xuống VPS (`/api/switch`). */
+export const pushSwitch = (env: Env, server: string, item: SwitchItem, now: number, fetchFn: typeof fetch): Promise<SwitchPush> => pushItem(env, server, '/api/switch', item, now, fetchFn)
+
+/** Đẩy bộ input EA ghi đè của một tài khoản MT xuống VPS (`/api/params`). */
+export const pushParams = (env: Env, server: string, item: ParamsItem, now: number, fetchFn: typeof fetch): Promise<SwitchPush> => pushItem(env, server, '/api/params', item, now, fetchFn)
 
 export type ProbeSample = { ms: number | null; status: number | null; error: string | null }
 export type ProbeResult = {

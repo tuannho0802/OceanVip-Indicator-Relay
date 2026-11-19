@@ -30,6 +30,9 @@ export async function sameSecret(a: string, b: string): Promise<boolean> {
 export const SKEW_SEC = 300
 export const signBody = (syncKey: string, ts: number, body: string): Promise<string> => hmacHex(syncKey, `${ts}.${body}`)
 
+/** Kiểm chữ ký của `signBody` (so thời gian không đổi). */
+export const verifyBody = async (syncKey: string, ts: number, body: string, sig: string): Promise<boolean> => safeEqual(sig, await signBody(syncKey, ts, body))
+
 /** Tín hiệu giao cho Gateway kèm chữ ký (gắn với terminal), để Gateway không nhận tín hiệu bị sửa/giả giữa đường. */
 export type WireSignal = {
     id: number
