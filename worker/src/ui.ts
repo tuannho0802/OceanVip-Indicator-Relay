@@ -34,6 +34,26 @@ label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:#7fa3b3}
 #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#19c3b1;color:#04222a;padding:8px 16px;border-radius:10px;font-weight:600;display:none;max-width:90vw;z-index:9}
 #toast.bad{background:#e05a6a;color:#fff}
 table{width:100%;border-collapse:collapse}td,th{padding:6px 8px;border-bottom:1px solid #17394d;text-align:left;vertical-align:top;font-size:13px}th{color:#7fa3b3;font-weight:500}
+.pp{margin-top:8px;padding:10px 12px;background:#0b1d29;border:1px solid #17394d;border-radius:12px}
+.pp-note{font-size:12px;color:#7fa3b3;line-height:1.5}.pp-warn{font-size:12px;color:#f0c060;margin-top:4px}
+.pg{border:1px solid #17394d;border-radius:10px;margin:8px 0;background:#0d2230}
+.pg>summary{cursor:pointer;padding:10px 12px;font-weight:600;color:#19c3b1;list-style:none;display:flex;gap:8px;align-items:center;user-select:none}
+.pg>summary::-webkit-details-marker{display:none}
+.pg>summary::before{content:"\25B8";font-size:11px;color:#7fa3b3}.pg[open]>summary::before{content:"\25BE"}
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:0 22px;padding:0 12px 8px}
+.pi{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 8px;min-height:46px;border-bottom:1px solid #12293a;border-left:3px solid transparent}
+.pi.ov{border-left-color:#19c3b1;background:#0f2b34}.pi.tc{border-left-color:#e0a43a;background:#1c1a0f}
+.pi .lb{flex:1;min-width:0;display:block;font-size:13px;line-height:1.3;color:#e6f4f8;cursor:pointer}
+.pi .lb small{display:block;color:#7fa3b3;font-size:11px;margin-top:2px}
+.pi .ct{display:flex;align-items:center;gap:6px;flex:none}
+.pi input.num,.pi select{width:108px;height:34px;padding:4px 8px}.pi select{width:124px}
+.pi button.rs{padding:0 8px;height:30px}
+input.sw{-webkit-appearance:none;appearance:none;width:42px;height:24px;padding:0;border-radius:999px;background:#17394d;border:1px solid #1f4d6b;position:relative;cursor:pointer;flex:none}
+input.sw::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#9fc3d1;transition:left .12s}
+input.sw:checked{background:#19c3b1;border-color:#19c3b1}input.sw:checked::after{left:20px;background:#04222a}
+input.sw:indeterminate::after{left:11px;opacity:.5}
+.pbar{position:sticky;bottom:0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;padding:10px 0 2px;background:linear-gradient(rgba(11,29,41,0),#0b1d29 28%);z-index:2}
+@media (max-width:520px){body{padding:10px}.pp{padding:8px}.pgrid{padding:0 6px 6px}.pi input.num{width:96px}.pi select{width:112px}.pbar .pri{flex:1 1 auto}}
 pre{background:#0b1d29;border:1px solid #17394d;border-radius:10px;padding:10px 12px;white-space:pre-wrap;word-break:break-all;font:12px ui-monospace,monospace;color:#cfe8f0;margin:6px 0}
 .login{max-width:360px;margin:8vh auto 0}.login form{display:flex;flex-direction:column;gap:10px}
 .sig pre{margin:6px 0 0}
@@ -390,39 +410,60 @@ const CLIENT_JS = String.raw`
       h('button', { class: a.enabled ? 'dng' : 'pri', 'data-act': 'eaToggle', 'data-server': s.id, 'data-login': a.login, 'data-v': a.enabled ? '0' : '1', disabled: s.locked ? true : null, text: a.enabled ? 'Tắt' : 'Bật' }))
     return h('div', null, row, open ? eaParamsPanel(s, S.pp.d) : null)
   }
-  /** Form tuỳ chỉnh input EA của một tài khoản: chỉ các ô bạn đã chạm vào mới được gửi đi; ô số để trống = bỏ ghi đè (EA dùng input của chính nó). */
+  /** Form tuỳ chỉnh input EA của một tài khoản: nhóm gập được, mỗi input một dòng (nhãn trái, ô nhập phải). Chỉ ô bạn đã chạm vào mới được gửi đi. */
   function eaParamsPanel(s, d) {
-    var f = h('form', { 'data-form': 'eaParamsSave', 'data-server': s.id, 'data-login': d.login, style: 'margin-top:8px;padding:10px 12px;background:#0b1d29;border:1px solid #17394d;border-radius:10px' })
+    var f = h('form', { class: 'pp', 'data-form': 'eaParamsSave', 'data-server': s.id, 'data-login': d.login })
     var keys = Object.keys(d.overrides)
-    add(f, h('div', { class: 'muted', text: 'Giá trị bạn đặt ở đây ghi đè input trên EA (EA áp ở nhịp ping kế tiếp, vài giây). Ô nào bạn không chạm vào thì EA giữ nguyên. Bấm ↺ hoặc xóa trống ô số để EA quay về input của chính nó. Công tắc tổng InpAllowTrading, địa chỉ Gateway, Magic và Comment không chỉnh từ xa được.' }))
-    if (Object.keys(d.current).length === 0) add(f, h('div', { class: 'muted', style: 'margin-top:4px;color:#f0c060', text: 'EA chưa báo input hiện tại (EA bản cũ hoặc chưa chạy lại): vẫn đặt được, nhưng ô chưa hiện giá trị đang dùng.' }))
-    var group = ''
-    var grid = null
+    add(f, h('div', { class: 'pp-note', text: 'Chỉ ô bạn đổi mới được gửi xuống EA (áp ở nhịp ping kế tiếp, vài giây). Nút ↺ hoặc xóa trống ô số = bỏ ghi đè, EA dùng input của chính nó. Không chỉnh từ xa: InpAllowTrading, địa chỉ Gateway, Magic, Comment.' }))
+    if (Object.keys(d.current).length === 0) add(f, h('div', { class: 'pp-warn', text: 'EA chưa báo input hiện tại (EA bản cũ hoặc chưa chạy lại): vẫn đặt được, nhưng ô chưa hiện giá trị đang dùng.' }))
+    var groups = []
+    var byName = {}
     d.spec.forEach(function (p) {
-      if (p.group !== group) {
-        group = p.group
-        add(f, h('h3', { style: 'margin:12px 0 4px', text: group }))
-        grid = h('div', { style: 'display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:6px 14px' })
-        add(f, grid)
-      }
-      var over = d.overrides[p.key]
-      var cur = d.current[p.key]
-      var eff = over !== undefined ? over : (cur !== undefined && cur !== '' ? Number(cur) : null)
-      var ctl
-      if (p.type === 'bool') ctl = h('input', { type: 'checkbox', name: p.key, checked: eff === 1 ? true : null })
-      else if (p.options) {
-        ctl = h('select', { name: p.key },
-          eff === null ? h('option', { value: '', text: '(không đổi)' }) : null,
-          p.options.map(function (o) { return h('option', { value: o.value, text: o.label, selected: eff === o.value ? true : null }) }))
-      } else ctl = h('input', { type: 'number', name: p.key, class: 'num', style: 'width:96px', min: p.min, max: p.max, step: p.type === 'int' ? 1 : String(1 / Math.pow(10, p.dp || 2)), value: eff === null ? '' : eff, placeholder: 'EA' })
-      add(grid, h('label', { style: 'flex-direction:row;align-items:center;gap:6px;color:#e6f4f8' },
-        ctl,
-        h('span', { text: p.label }),
-        over !== undefined ? h('span', { class: 'badge ok', text: 'ghi đè' }) : null,
-        over !== undefined ? h('button', { type: 'button', style: 'padding:0 6px', title: 'Bỏ ghi đè: EA dùng input của chính nó', 'data-act': 'eaParamReset', 'data-key': p.key, text: '↺' }) : null))
+      if (!byName[p.group]) { byName[p.group] = []; groups.push(p.group) }
+      byName[p.group].push(p)
     })
-    add(f, h('div', { class: 'row', style: 'margin-top:12px' },
+    if (!S.pp.open) {
+      S.pp.open = {}
+      groups.forEach(function (g, i) { S.pp.open[g] = i === 0 || byName[g].some(function (p) { return d.overrides[p.key] !== undefined }) })
+    }
+    groups.forEach(function (g) {
+      var n = byName[g].filter(function (p) { return d.overrides[p.key] !== undefined }).length
+      var det = h('details', { class: 'pg', 'data-g': g, open: S.pp.open[g] ? true : null },
+        h('summary', null, h('span', { text: g }), n > 0 ? h('span', { class: 'badge ok', text: 'ghi đè ' + n }) : null))
+      var grid = h('div', { class: 'pgrid' })
+      byName[g].forEach(function (p) {
+        var over = d.overrides[p.key]
+        var cur = d.current[p.key]
+        var eff = over !== undefined ? over : (cur !== undefined && cur !== '' ? Number(cur) : null)
+        var id = 'pp_' + p.key
+        var ctl
+        if (p.type === 'bool') {
+          ctl = h('input', { type: 'checkbox', class: 'sw', id: id, name: p.key, checked: eff === 1 ? true : null })
+          if (eff === null) ctl.indeterminate = true
+        } else if (p.options) {
+          ctl = h('select', { id: id, name: p.key },
+            eff === null ? h('option', { value: '', text: '(theo EA)' }) : null,
+            p.options.map(function (o) { return h('option', { value: o.value, text: o.label, selected: eff === o.value ? true : null }) }))
+        } else ctl = h('input', { type: 'number', id: id, name: p.key, class: 'num', min: p.min, max: p.max, step: p.type === 'int' ? 1 : String(1 / Math.pow(10, p.dp || 2)), value: eff === null ? '' : eff, placeholder: '(theo EA)' })
+        var curTxt = null
+        if (cur !== undefined && cur !== '') {
+          if (p.type === 'bool') curTxt = Number(cur) === 1 ? 'BẬT' : 'TẮT'
+          else if (p.options) { var oo = p.options.filter(function (o) { return o.value === Number(cur) })[0]; curTxt = oo ? oo.label : cur }
+          else curTxt = cur
+        }
+        var running = over !== undefined && cur !== undefined && cur !== '' && Number(cur) !== over ? 'EA đang chạy: ' + curTxt : null
+        add(grid, h('div', { class: 'pi' + (over !== undefined ? ' ov' : '') },
+          h('label', { class: 'lb', for: id }, p.label, running ? h('small', { text: running }) : null),
+          h('span', { class: 'ct' }, ctl,
+            over !== undefined ? h('button', { type: 'button', class: 'rs', title: 'Bỏ ghi đè: EA dùng input của chính nó', 'aria-label': 'Bỏ ghi đè ' + p.label, 'data-act': 'eaParamReset', 'data-key': p.key, text: '↺' }) : null)))
+      })
+      add(det, grid)
+      add(f, det)
+    })
+    add(f, h('div', { class: 'pbar' },
       h('button', { class: 'pri', type: 'submit', disabled: s.locked ? true : null, text: 'Lưu và gửi xuống EA' }),
+      h('span', { class: 'muted', 'data-role': 'ppCount', text: '' })))
+    add(f, h('div', { class: 'row', style: 'margin-top:8px' },
       keys.length > 0 ? h('button', { type: 'button', class: 'dng', 'data-act': 'eaParamsClear', text: 'Bỏ hết ghi đè (' + keys.length + ')' }) : null,
       h('span', { class: 'muted', text: d.rev > 0 ? 'Phiên bản ' + d.rev + (d.vps_applied ? (d.ea_applied ? ' · EA đã áp' : ' · VPS đã nhận, chờ EA') : ' · đang chờ VPS') + (d.changed_ago !== null ? ' · đổi ' + ago(d.changed_ago) : '') : 'Chưa ghi đè gì' })))
     return f
@@ -895,8 +936,19 @@ const CLIENT_JS = String.raw`
   })
   function markTouched(ev) {
     var el = ev.target
-    if (el && el.closest && el.closest('form[data-form="eaParamsSave"]') && el.getAttribute && el.getAttribute('name')) el.setAttribute('data-touched', '1')
+    if (!el || !el.closest || !el.closest('form[data-form="eaParamsSave"]') || !el.getAttribute || !el.getAttribute('name')) return
+    el.setAttribute('data-touched', '1')
+    var row = el.closest('.pi')
+    if (row) row.classList.add('tc')
+    var n = root.querySelectorAll('form[data-form="eaParamsSave"] [data-touched]').length
+    var c = root.querySelector('[data-role="ppCount"]')
+    if (c) c.textContent = n + ' thay đổi chưa lưu'
   }
+  // Nhớ nhóm nào đang mở khi trang dựng lại (sự kiện toggle không nổi lên nên bắt ở pha capture).
+  root.addEventListener('toggle', function (ev) {
+    var el = ev.target
+    if (el && el.classList && el.classList.contains('pg') && S.pp && S.pp.open) S.pp.open[el.getAttribute('data-g')] = el.open
+  }, true)
   root.addEventListener('input', markTouched)
   root.addEventListener('change', function (ev) {
     markTouched(ev)
